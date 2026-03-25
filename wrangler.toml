@@ -1,0 +1,54 @@
+name              = "oracle-claim-scanner"
+main              = "src/index.js"
+compatibility_date  = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+account_id        = "d7b99530559ab4f2545e9bdc72a7ab9b"
+
+# ── Public route (Cloudflare proxied) ─────────────────────────────────────────
+[[routes]]
+pattern   = "oracle-scanner.elfadil.com/*"
+zone_name = "elfadil.com"
+
+# ── Browser Rendering (Puppeteer) ─────────────────────────────────────────────
+[browser]
+binding = "BROWSER"
+
+# ── KV: Session cookie store (8h TTL set per-put) ─────────────────────────────
+# Create:  wrangler kv namespace create "ORACLE_SESSIONS"
+[[kv_namespaces]]
+binding = "SESSIONS"
+id      = "b1785b723f824a1f839b5289e6fad536"
+
+# ── KV: Scan results store (24h TTL set per-put) ──────────────────────────────
+# Create:  wrangler kv namespace create "ORACLE_RESULTS"
+[[kv_namespaces]]
+binding = "RESULTS"
+id      = "639ac84ff0c540f9b9cded716ae65f06"
+
+# ── Secrets (set via CLI — never commit plaintext) ────────────────────────────
+#
+#   Shared fallback credentials (used when hospital-specific ones are absent):
+#     wrangler secret put ORACLE_USER
+#     wrangler secret put ORACLE_PASS
+#
+#   Per-hospital credentials (override shared fallback):
+#     wrangler secret put ORACLE_USER_RIYADH
+#     wrangler secret put ORACLE_PASS_RIYADH
+#     wrangler secret put ORACLE_USER_MADINAH
+#     wrangler secret put ORACLE_PASS_MADINAH
+#     wrangler secret put ORACLE_USER_UNAIZAH
+#     wrangler secret put ORACLE_PASS_UNAIZAH
+#     wrangler secret put ORACLE_USER_KHAMIS
+#     wrangler secret put ORACLE_PASS_KHAMIS
+#     wrangler secret put ORACLE_USER_JIZAN
+#     wrangler secret put ORACLE_PASS_JIZAN
+#     wrangler secret put ORACLE_USER_ABHA
+#     wrangler secret put ORACLE_PASS_ABHA
+#
+#   API key (protects all non-public endpoints):
+#     wrangler secret put API_KEY
+#
+# ── Optional env vars ─────────────────────────────────────────────────────────
+[vars]
+DEFAULT_HOSPITAL = "riyadh"
+PORTALS_URL      = "https://portals.elfadil.com"

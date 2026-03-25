@@ -1,0 +1,17 @@
+{
+  "name": "oracle-claim-scanner",
+  "version": "1.0.0",
+  "description": "COMPLIANCELINC — Oracle Oasis+ claim scanner on Cloudflare Workers",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "setup": "node setup.mjs"
+  },
+  "dependencies": {
+    "@cloudflare/puppeteer": "^1.0.6"
+  },
+  "devDependencies": {
+    "wrangler": "^4.77.0"
+  }
+}

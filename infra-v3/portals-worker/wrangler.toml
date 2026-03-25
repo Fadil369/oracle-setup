@@ -1,0 +1,25 @@
+name = "brainsait-portals"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+account_id = "d7b99530559ab4f2545e9bdc72a7ab9b"
+
+# Serve on portals.elfadil.com
+[[routes]]
+pattern = "portals.elfadil.com/*"
+zone_name = "elfadil.com"
+
+# Health cache KV (optional — cron degrades gracefully if not set)
+# Create:  wrangler kv namespace create "PORTAL_HEALTH"
+# Then replace the id below with the output ID before deploying.
+[[kv_namespaces]]
+binding = "PORTAL_KV"
+id      = "079016c359c348e180724cdd76f29129"
+
+# Cron: probe all branches every 5 minutes
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Secrets:
+#   wrangler secret put API_KEY    ← protects /api/* endpoints
+[vars]
+SCANNER_URL = "https://oracle-scanner.elfadil.com"

@@ -1,0 +1,59 @@
+# ============================================================
+# COMPLIANCELINC — cloudflared service config
+# Target path: C:\ProgramData\cloudflared\config.yml
+# (copied there by install-tunnel-service.ps1)
+#
+# Designed for SILENT Windows Service operation:
+#   - Minimal logging (warn level only)
+#   - No stdout noise
+#   - Log to file in C:\ProgramData\cloudflared\
+#   - QUIC protocol (fastest, less TCP handshake overhead)
+# ============================================================
+
+tunnel: 2cffb7bf-983e-4835-acc1-3a417a27018f
+credentials-file: C:\Users\rcmrejection3\.cloudflared\2cffb7bf-983e-4835-acc1-3a417a27018f.json
+
+# ── Transport ─────────────────────────────────────────────
+protocol: quic
+retries: 10
+no-autoupdate: true          # disable background update checks (reduces noise)
+
+# ── Logging (minimal — keeps CrowdStrike happy) ───────────
+# "warn" suppresses all INFO/DEBUG chatter
+loglevel: warn
+logfile: C:\Users\rcmrejection3\.cloudflared\cloudflared.log
+
+# ── Metrics (local only) ──────────────────────────────────
+metrics: 127.0.0.1:20241
+
+# ── Global origin connection defaults ─────────────────────
+originRequest:
+  connectTimeout: 30s
+  tcpKeepAlive: 30s
+  keepAliveConnections: 10
+  keepAliveTimeout: 90s
+  noTLSVerify: false
+  http2Origin: false          # Oracle JSF 11g/12c incompatible with HTTP/2
+  proxyType: ""               # No local SOCKS proxy
+
+# ── Ingress rules (public hostnames) ──────────────────────
+# These mirror the Zero Trust dashboard settings.
+# The dashboard is the source of truth; these are a backup reference.
+# cloudflared resolves hostnames from Zero Trust automatically —
+# no need to repeat them here unless doing managed-config mode.
+#
+# ingress:
+#   - hostname: oracle-riyadh.elfadil.com
+#     service: https://128.1.1.185
+#     originRequest: { noTLSVerify: true, originServerName: "128.1.1.185" }
+#   - hostname: oracle-madinah.elfadil.com
+#     service: http://172.25.11.26
+#   - hostname: oracle-unaizah.elfadil.com
+#     service: http://10.0.100.105
+#   - hostname: oracle-khamis.elfadil.com
+#     service: http://172.30.0.77
+#   - hostname: oracle-jizan.elfadil.com
+#     service: http://172.17.4.84
+#   - hostname: oracle-abha.elfadil.com
+#     service: http://172.19.1.1
+#   - service: http_status:404

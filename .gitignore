@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build/compile artifacts
+dist/
+.wrangler/
+*.wasm
+
+# Large binary/archive files
+*.zip
+*.pdf
+*.exe
+
+# Sensitive / runtime artifacts
+.dev.vars
+.env
+.env.*
+artifacts/
+scan_results_*.json
+scan_results_*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Wrangler cache
+.cache/

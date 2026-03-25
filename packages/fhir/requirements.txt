@@ -1,0 +1,2 @@
+fhir-resources>=0.0.7
+pydantic>=2.0.0
