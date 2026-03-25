@@ -1032,60 +1032,131 @@ async function handleDebugClick(request, env) {
     if (!menuOpened) return json({ error: "Hamburger not found" }, 500);
     await sleep(3000);
 
-    // Find and click the menu item matching itemText
+    // Strategy: click by .os-treeview-item-text (ADF nav widget class — works without typing in search)
     const urlBefore = page.url();
-    const clicked = await page.evaluate((target) => {
+    const clickInfo = await page.evaluate((target) => {
       const sidebar = document.getElementById('pt1:r1') || document.body;
-      const targetLower = target.toLowerCase();
-      // Walk every leaf text node looking for a match
-      const all = Array.from(sidebar.querySelectorAll('*'))
-        .filter(el => el.children.length === 0);
+      const targetLower = target.toLowerCase().trim();
+
+      // Method 1: find leaf by title attribute on .os-treeview-item-text SPAN
+      const byTitle = sidebar.querySelector(`.os-treeview-item-text[title="${target.toUpperCase()}"]`)
+        || sidebar.querySelector(`.os-treeview-item-text[title="${target}"]`);
+      if (byTitle) {
+        const row = byTitle.closest('.os-treeview-item-content') || byTitle.parentElement;
+        row.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+        const r = row.getBoundingClientRect();
+        return { found: true, text: byTitle.textContent.trim(), method: 'byTitle', clickedId: row.id||'', clickedTag: row.tagName, x: r.left + r.width/2, y: r.top + r.height/2, hasRect: r.width>0 && r.height>0 };
+      }
+
+      // Method 2: find .os-treeview-item-text SPAN whose textContent matches exactly
+      const allTextSpans = Array.from(sidebar.querySelectorAll('.os-treeview-item-text'));
+      for (const span of allTextSpans) {
+        const txt = (span.innerText || span.textContent || '').trim();
+        if (txt.toLowerCase() === targetLower) {
+          const row = span.closest('.os-treeview-item-content') || span.parentElement;
+          row.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+          const r = row.getBoundingClientRect();
+          const titleCode = span.getAttribute('title') || '';
+          // Prefer clicking parent SPAN.os-treeview-item (which has the id like "9292-T")
+          const treeItem = span.closest('.os-treeview-item');
+          const clickTarget = row; // item-content DIV is the clickable row in this ADF widget
+          return {
+            found: true, text: txt, titleCode, method: 'byTextSpan',
+            clickedId: clickTarget.id||'', clickedTag: clickTarget.tagName,
+            treeItemId: treeItem ? treeItem.id : '',
+            isLeaf: treeItem ? treeItem.classList.contains('os-treeview-leaf') : false,
+            x: r.left + r.width/2, y: r.top + r.height/2,
+            hasRect: r.width > 0 && r.height > 0,
+          };
+        }
+      }
+
+      // Method 3: fallback — any element whose full text matches
+      const all = Array.from(sidebar.querySelectorAll('*')).filter(el => el.children.length === 0);
       for (const el of all) {
         const txt = (el.innerText || el.textContent || '').trim();
-        if (txt.toLowerCase() === targetLower || txt.toLowerCase().includes(targetLower)) {
-          // Walk up to find the first clickable ancestor
-          let anc = el;
-          while (anc && anc !== sidebar) {
-            if (anc.tagName === 'A' || anc.getAttribute('onclick') || anc.id) {
-              anc.click();
-              return { found: true, text: txt, clickedId: anc.id, clickedTag: anc.tagName };
-            }
-            anc = anc.parentElement;
-          }
-          // fallback: click the span itself
-          el.click();
-          return { found: true, text: txt, clickedId: el.id, clickedTag: el.tagName };
+        if (txt.toLowerCase().includes(targetLower)) {
+          const row = el.closest('.os-treeview-item-content') || el.closest('div') || el.parentElement;
+          const clickTarget = row || el;
+          clickTarget.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+          const r = clickTarget.getBoundingClientRect();
+          return {
+            found: true, text: txt, method: 'fallback',
+            clickedId: clickTarget.id||'', clickedTag: clickTarget.tagName,
+            x: r.left + r.width/2, y: r.top + r.height/2,
+            hasRect: r.width > 0 && r.height > 0,
+          };
         }
       }
       return { found: false };
     }, itemText);
 
-    if (!clicked.found) {
+    if (!clickInfo.found) {
       await browser.close();
       return json({ error: `Menu item not found: "${itemText}"`, hospitalId, sessionRestored }, 404);
     }
 
-    // Wait for ADF navigation (no full page reload — URL changes or ADF partialSubmit)
-    await sleep(4000);
+    // Use Puppeteer real mouse click for ADF event delegation to fire properly
+    let clicked = {
+      found: true, text: clickInfo.text,
+      clickedId: clickInfo.clickedId, clickedTag: clickInfo.clickedTag,
+      method: clickInfo.method, titleCode: clickInfo.titleCode,
+      treeItemId: clickInfo.treeItemId, isLeaf: clickInfo.isLeaf,
+    };
+    try {
+      if (clickInfo.hasRect && clickInfo.x > 0 && clickInfo.y > 0) {
+        await page.mouse.move(clickInfo.x, clickInfo.y);
+        await page.mouse.down();
+        await sleep(80);
+        await page.mouse.up();
+        clicked.method = 'mouse.down+up';
+      } else {
+        await page.evaluate((id, target) => {
+          const el = (id && document.getElementById(id))
+            || Array.from(document.querySelectorAll('li,a,[onclick]'))
+                .find(e => (e.innerText || e.textContent || '').trim().toLowerCase().includes(target.toLowerCase()));
+          if (el) {
+            el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+            ['mousedown','mouseup','click'].forEach(ev =>
+              el.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true, view: window }))
+            );
+          }
+        }, clickInfo.clickedId, itemText);
+        clicked.method = 'dispatchEvent.fallback';
+      }
+      clicked.onclick = clickInfo.onclick;
+    } catch (ce) {
+      clicked.clickError = ce.message;
+    }
+
+    // Wait for ADF partial-page refresh to settle (network idle preferred, then fallback sleep)
+    try {
+      await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 });
+    } catch { await sleep(4000); }
+
     const urlAfter  = page.url();
     const pageTitle = await page.title().catch(() => '');
 
-    // Grab all form fields + buttons on the new page
+    // Capture visible page state — ADF headers, panels, visible text, form fields
     const pageState = await page.evaluate(() => {
       const inputs = Array.from(document.querySelectorAll('input, select, textarea'))
         .filter(el => el.offsetParent)
         .map(el => ({ tag: el.tagName, id: el.id, name: el.name, type: el.type, placeholder: el.placeholder }))
         .slice(0, 50);
-      const buttons = Array.from(document.querySelectorAll('button, a.btn, a[class*="btn"], input[type=submit]'))
+      const buttons = Array.from(document.querySelectorAll('button, a.btn, a[class*="Btn"], [class*="button"]'))
         .filter(el => el.offsetParent)
         .map(el => ({ tag: el.tagName, id: el.id, text: (el.innerText || el.value || '').trim().slice(0, 60) }))
         .slice(0, 30);
-      const headers = Array.from(document.querySelectorAll('h1, h2, h3, [class*="title"], [class*="header"]'))
+      const headers = Array.from(document.querySelectorAll('h1, h2, h3, [class*="Title"], [class*="Header"], [class*="title"], [class*="header"], .title, .header'))
         .filter(el => el.offsetParent)
         .map(el => (el.innerText || el.textContent || '').trim().slice(0, 80))
         .filter(t => t.length > 1)
         .slice(0, 15);
-      return { inputs, buttons, headers, bodyHtml: document.body.innerHTML.slice(0, 3000) };
+      // Capture visible page text in main content area (ADF panel/region)
+      const mainPanel = document.getElementById('pt1:r2') || document.querySelector('[id$=":r2"]')
+        || document.getElementById('pt1:pc1') || document.querySelector('.AFMaskingContent') || document.body;
+      const visibleText = (mainPanel.innerText || mainPanel.textContent || '').trim().slice(0, 1500).replace(/\s+/g, ' ');
+      return { inputs, buttons, headers, visibleText };
     });
 
     const screenshot = await page.screenshot({ encoding: "base64", type: "jpeg", quality: 60 });
@@ -1096,6 +1167,7 @@ async function handleDebugClick(request, env) {
       clickedItem: itemText, clicked,
       urlBefore, urlAfter, pageTitle,
       urlChanged: urlBefore !== urlAfter,
+      adfPartialRender: urlBefore === urlAfter, // ADF stays on same URL, content changes
       relativePath: urlAfter.replace(/^https?:\/\/[^/]+/, ''),
       pageState,
       screenshot: `data:image/jpeg;base64,${screenshot}`,
