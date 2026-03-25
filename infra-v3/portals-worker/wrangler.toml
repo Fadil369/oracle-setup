@@ -23,3 +23,7 @@ crons = ["*/5 * * * *"]
 #   wrangler secret put API_KEY    ← protects /api/* endpoints
 [vars]
 SCANNER_URL = "https://oracle-scanner.elfadil.com"
+
+[[services]]
+binding = "SCANNER_SERVICE"
+service = "oracle-claim-scanner"

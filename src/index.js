@@ -82,6 +82,7 @@ const SEL = {
 
 const LOGIN_PATH = "/prod/faces/Home";
 const SEARCH_PATH = "/prod/faces/PatientSearch";
+const WATCHLIST_LIMIT = 24;
 
 // ── API key guard ───────────────────────────────────────────────────────────
 function requireApiKey(request, env) {
@@ -128,6 +129,10 @@ export default {
       return handleHealth(env);
     }
 
+    if (request.method === "GET" && url.pathname === "/control-tower/claims") {
+      return handleControlTowerClaims(request, env);
+    }
+
     // ── Auth guard — all non-health routes require API key ─────────────
     const authErr = requireApiKey(request, env);
     if (authErr) return authErr;
@@ -172,6 +177,17 @@ export default {
       return handleMetrics(env);
     }
 
+    // ── Route: GET /batch/latest ──────────────────────────────────────────
+    if (request.method === "GET" && url.pathname === "/batch/latest") {
+      return handleLatestBatch(env);
+    }
+
+    // ── Route: GET /batch/:batchId ────────────────────────────────────────
+    if (request.method === "GET" && url.pathname.startsWith("/batch/")) {
+      const batchId = url.pathname.split("/batch/")[1];
+      return handleGetBatch(batchId, env);
+    }
+
     // ── Route: DELETE /session ────────────────────────────────────────────
     if (request.method === "DELETE" && url.pathname === "/session") {
       // Clear session for specific hospital or all
@@ -214,6 +230,16 @@ export default {
       return handleDebugNavigate(request, env);
     }
 
+    // ── Route: GET /debug/api-scan — Api Transactions date/bundle search ──
+    if (request.method === "GET" && url.pathname === "/debug/api-scan") {
+      return handleDebugApiScan(request, env);
+    }
+
+    // ── Route: GET /debug/manage-claims — Manage Claims page search ─────
+    if (request.method === "GET" && url.pathname === "/debug/manage-claims") {
+      return handleDebugManageClaims(request, env);
+    }
+
     return json({ 
       error: "Not found", 
       routes: [
@@ -224,6 +250,9 @@ export default {
         "GET  /status           — check session + KV health",
         "GET  /health           — full health check",
         "GET  /metrics          — view performance metrics",
+        "GET  /batch/latest     — latest stored batch summary",
+        "GET  /batch/:id        — stored batch summary by id",
+        "GET  /control-tower/claims — live claims feed for the portals control tower",
         "DELETE /session        — clear stored session (force re-login)",
         "GET  /debug/login      — screenshot login flow + diagnostics",
         "GET  /debug/portal     — home page + hamburger + menu search (?search=billing)",
@@ -239,111 +268,397 @@ export default {
 // ─── Core Scanner Logic ────────────────────────────────────────────────────────
 async function performOracleScan(page, env, req, hospitalConfig) {
   const t0 = Date.now();
-  const { nationalId, patientName } = req;
-  const ORACLE_URL = hospitalConfig.baseUrl;
-  const HOME_PATH  = hospitalConfig.loginPath;   // Use the login/home path (always valid)
+  const { bundleId, nationalId, serviceDate } = req;
 
-  // ── Step 3: Navigate to the Oracle home/search page ───────────────────────
-  // Try the home page with ?action=search hint, then fall back to plain home page.
-  // Oracle Oasis+ installations often expose search directly on the home page.
-  let navigated = false;
-  for (const candidate of [
-    `${ORACLE_URL}${HOME_PATH}?action=search`,
-    `${ORACLE_URL}${HOME_PATH}`,
-  ]) {
-    try {
-      const resp = await page.goto(candidate, { waitUntil: "domcontentloaded", timeout: 30000 });
-      const status = resp?.status() ?? 0;
-      if (status < 400) { navigated = true; break; }
-    } catch { /* try next */ }
-  }
-  if (!navigated) throw new Error("Could not navigate to Oracle search page");
+  // ── Step 1: Open hamburger sidebar ──────────────────────────────────────
+  const menuOpened = await page.evaluate(() => {
+    const el = document.getElementById('pt1:OasisHedarToolBar:hamburgerBtn')
+      || document.querySelector('[id$=":hamburgerBtn"]');
+    if (el) { el.click(); return true; }
+    return false;
+  });
+  if (!menuOpened) throw new Error("Could not open Oracle sidebar (hamburger btn not found)");
+  await sleep(3000);
 
-  const searchSelectors = [
-    SEL.searchInput,
-    'input[id*="NationalID"]',
-    'input[id*="national_id"]',
-    'input[name*="nationalId"]',
-    'input[placeholder*="ID"]',
-  ];
-
-  let searched = false;
-  for (const sel of searchSelectors) {
-    const el = await page.$(sel);
-    if (el) {
-      await el.click({ clickCount: 3 });
-      await el.type(nationalId, { delay: 10 });
-      await page.keyboard.press("Enter");
-      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 })
-        .catch(() => {});
-      searched = true;
-      break;
-    }
-  }
-
-  if (!searched && patientName) {
-    const nameInput = await page.$('input[id*="name"], input[placeholder*="Name" i]');
-    if (nameInput) {
-      await nameInput.type(patientName.split(" ")[0], { delay: 10 });
-      await page.keyboard.press("Enter");
-      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 })
-        .catch(() => {});
-    }
-  }
-
-  // ── Step 4: Extract patient record ────────────────────────────────────
-  const patientRows = await page.$$(SEL.patientRow);
-  let mrn = null;
-  let patientFound = false;
-  let extractedName = null;
-
-  for (const row of patientRows.slice(0, 5)) {
-    const text = await row.evaluate(el => el.innerText).catch(() => "");
-    if (text.includes(nationalId)) {
-      patientFound = true;
-      const mrnMatch = text.match(/\b([0-9]{5,8})\b/);
-      if (mrnMatch) mrn = mrnMatch[1];
-      extractedName = text.split("\n")[0]?.trim();
-      break;
-    }
-  }
-
-  // ── Step 5: Retrieve document links ───────────────────────────────────
-  const docs = [];
-  if (patientFound) {
-    const links = await page.$$(SEL.docLinks);
-    for (const link of links.slice(0, 5)) {
-      const href  = await link.evaluate(el => el.href).catch(() => "");
-      const label = await link.evaluate(el => el.innerText.trim()).catch(() => "");
-      if (href) {
-        let type = "DOCUMENT";
-        if (/invoice|فاتورة/i.test(label + href))    type = "INVOICE";
-        else if (/lab|تحليل/i.test(label + href))     type = "LAB_RESULT";
-        else if (/xray|أشعة|radiol/i.test(label+href)) type = "XRAY";
-        else if (/note|ملاحظ/i.test(label + href))    type = "CLINICAL_NOTES";
-        else if (/report|تقرير/i.test(label + href))  type = "MEDICAL_REPORT";
-        docs.push({ type, label, href });
+  // ── Step 2: Navigate to Api Transactions via ADF sidebar ────────────────
+  const clickInfo = await page.evaluate(() => {
+    const sidebar = document.getElementById('pt1:r1') || document.body;
+    const allTextSpans = Array.from(sidebar.querySelectorAll('.os-treeview-item-text'));
+    for (const span of allTextSpans) {
+      const txt = (span.innerText || span.textContent || '').trim();
+      if (txt === 'Api Transactions') {
+        const row = span.closest('.os-treeview-item-content') || span.parentElement;
+        row.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+        const r = row.getBoundingClientRect();
+        return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2, hasRect: r.width > 0 && r.height > 0 };
       }
     }
+    return { found: false };
+  });
+
+  if (!clickInfo.found) throw new Error("Api Transactions menu item not found in sidebar");
+
+  if (clickInfo.hasRect && clickInfo.x > 0 && clickInfo.y > 0) {
+    await page.mouse.move(clickInfo.x, clickInfo.y);
+    await page.mouse.down();
+    await sleep(80);
+    await page.mouse.up();
   }
 
-  // ── Step 6: Screenshot for audit ─────────────────────────────────────
+  try {
+    await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 });
+  } catch { await sleep(4000); }
+
+  // ── Step 3: Fill Bundle ID filter ────────────────────────────────────────
+  // The BUNDELID textarea is the primary filter for claim lookup
+  const bundleIdFilled = await page.evaluate((bId) => {
+    const ta = document.querySelector('textarea[id*="BUNDELID"]')
+      || document.querySelector('[id*="BUNDELID::content"]');
+    if (ta) {
+      ta.focus();
+      ta.value = bId;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+    return false;
+  }, bundleId);
+
+  // ── Step 4: Also fill From Date / To Date if serviceDate is provided ─────
+  // Oracle expects datetime format: YYYY-MM-DD HH:MM:SS (e.g. 2026-02-25 00:00:00)
+  if (serviceDate) {
+    let fromStr = serviceDate;
+    let toStr   = serviceDate;
+    // Normalize from YYYY-MM-DD to Oracle's expected datetime format
+    const m = serviceDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      fromStr = `${m[1]}-${m[2]}-${m[3]} 00:00:00`;
+      toStr   = `${m[1]}-${m[2]}-${m[3]} 23:59:59`;
+    }
+
+    await page.evaluate((from, to) => {
+      const contentArea = document.getElementById('pt1:contrRg') || document.body;
+      const fromEl = contentArea.querySelector('[id*="fi2:id1::content"], [id*=":id1::content"]');
+      if (fromEl) {
+        fromEl.focus(); fromEl.value = from;
+        fromEl.dispatchEvent(new Event('input', { bubbles: true }));
+        fromEl.dispatchEvent(new Event('change', { bubbles: true }));
+        fromEl.blur();
+      }
+      const toEl = contentArea.querySelector('[id*="fi3:id2::content"], [id*=":id2::content"]');
+      if (toEl) {
+        toEl.focus(); toEl.value = to;
+        toEl.dispatchEvent(new Event('input', { bubbles: true }));
+        toEl.dispatchEvent(new Event('change', { bubbles: true }));
+        toEl.blur();
+      }
+    }, fromStr, toStr);
+  }
+
+  // ── Step 5: Click the "View" / Search button ─────────────────────────────
+  // Only look in the main content area (pt1:contrRg) to avoid hitting nav buttons
+  const viewClicked = await page.evaluate(() => {
+    const contentArea = document.getElementById('pt1:contrRg') || document.getElementById('pt1:r2') || document.body;
+    const allEls = Array.from(contentArea.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+    for (const el of allEls) {
+      if (!el.offsetParent) continue;
+      const txt = (el.innerText || el.value || el.getAttribute('title') || '').trim().toLowerCase();
+      if (txt === 'view' || txt === 'search' || txt === 'go' || txt === 'find') {
+        el.click();
+        return { clicked: true, text: txt, tag: el.tagName, id: el.id };
+      }
+    }
+    // Fallback: press Enter in the bundle ID field
+    const ta = document.querySelector('textarea[id*="BUNDELID"]');
+    if (ta) {
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+      return { clicked: false, fallback: 'Enter on BUNDELID' };
+    }
+    return { clicked: false };
+  });
+
+  try {
+    await page.waitForNetworkIdle({ idleTime: 800, timeout: 10000 });
+  } catch { await sleep(5000); }
+
+  // ── Step 6: Extract transaction results ──────────────────────────────────
+  const txData = await page.evaluate(() => {
+    // Scope entirely to the main content region (never touch nav/header)
+    const mainPanel = document.getElementById('pt1:contrRg')
+      || document.getElementById('pt1:r2')
+      || document.body;
+    const visibleText = (mainPanel.innerText || mainPanel.textContent || '').replace(/\s+/g, ' ').trim();
+    const noData = visibleText.toLowerCase().includes('no data to display');
+
+    // Only scan tables inside the main content panel
+    const rows = Array.from(mainPanel.querySelectorAll('tr')).filter(r => r.offsetParent);
+    const transactions = [];
+    for (const row of rows) {
+      const cells = Array.from(row.querySelectorAll('td')).map(c => (c.innerText || '').trim().replace(/\s+/g, ' '));
+      // Skip header rows (th only) and rows with fewer than 3 actual data cells
+      if (cells.length >= 3 && cells.filter(c => c.length > 0).length >= 3) {
+        transactions.push(cells);
+      }
+    }
+
+    // Map columns: Trans Id, Name, Function, Trans Date, Res Ms, Status, Outcome, Patient Id, Purchaser Code, Error Message
+    const txRows = transactions.slice(0, 20).map(cells => ({
+      transId:       cells[0] || '',
+      name:          cells[1] || '',
+      func:          cells[2] || '',
+      transDate:     cells[3] || '',
+      resMs:         cells[4] || '',
+      status:        cells[5] || '',
+      outcome:       cells[6] || '',
+      patientId:     cells[7] || '',
+      purchaserCode: cells[8] || '',
+      errorMsg:      cells[9] || '',
+    }));
+
+    // Extract error detail rows (second table at bottom of page)
+    const errorRows = Array.from(mainPanel.querySelectorAll('tr')).filter(r => {
+      const txt = (r.innerText || '').toLowerCase();
+      return r.offsetParent && (txt.includes('error') || txt.includes('message'));
+    }).map(r => (r.innerText || '').trim().replace(/\s+/g, ' ')).slice(0, 10);
+
+    return { visibleText: visibleText.slice(0, 2000), noData, txRows, errorSection: errorRows };
+  });
+
+  // ── Step 7: Determine claim status from transaction data ──────────────────
+  let gateStatus = "NO_GO";
+  const gateReasons = [];
+  let transactionStatus = null;
+  let transactionOutcome = null;
+
+  if (txData.noData) {
+    gateReasons.push("BUNDLE_NOT_FOUND_IN_ORACLE");
+  } else if (txData.txRows.length > 0) {
+    // Find the row that matches our bundleId (if tx data is present)
+    const matchRow = txData.txRows.find(r =>
+      r.transId.includes(bundleId) || r.func.toUpperCase().includes('CLAIM') ||
+      r.status.length > 0
+    ) || txData.txRows[0];
+
+    transactionStatus  = matchRow?.status  || '';
+    transactionOutcome = matchRow?.outcome || '';
+    const errMsg       = matchRow?.errorMsg || '';
+
+    if (transactionOutcome.toUpperCase().includes('SUCCESS') || transactionStatus.toUpperCase().includes('SUCCESS')) {
+      gateStatus = "GO";
+    } else if (transactionOutcome.toUpperCase().includes('ERROR') || errMsg.length > 0) {
+      gateStatus = "NO_GO";
+      gateReasons.push("TRANSACTION_ERROR");
+      if (errMsg) gateReasons.push(errMsg.slice(0, 120));
+    } else if (transactionStatus.length > 0) {
+      gateStatus = "PARTIAL";
+      gateReasons.push(`TRANSACTION_STATUS: ${transactionStatus}`);
+    }
+  } else {
+    gateReasons.push("NO_TRANSACTIONS_FOUND");
+  }
+
   const screenshot = await page.screenshot({ encoding: "base64", type: "jpeg", quality: 50 });
 
   return {
     bundleId: req.bundleId,
     nationalId: req.nationalId,
     serviceDate: req.serviceDate,
-    patientName: extractedName || req.patientName || null,
-    mrn,
-    oracleFound: patientFound,
-    docs,
-    docCount: docs.length,
-    gateStatus: patientFound && docs.length > 0 ? "GO" : patientFound ? "PARTIAL" : "NO_GO",
-    gateReason: patientFound ? docs.length === 0 ? ["NO_DOCS_FOUND"] : [] : ["PATIENT_NOT_FOUND"],
+    patientName: req.patientName || null,
+    oracleFound: !txData.noData && txData.txRows.length > 0,
+    transactionStatus,
+    transactionOutcome,
+    txRows: txData.txRows.slice(0, 5),
+    errorDetails: txData.errorSection,
+    bundleIdFilled,
+    viewClicked,
+    gateStatus,
+    gateReason: gateReasons,
     screenshot: `data:image/jpeg;base64,${screenshot}`,
     scannedAt: new Date().toISOString(),
     durationMs: Date.now() - t0
+  };
+}
+
+function safeUpper(value, fallback = "UNKNOWN") {
+  return String(value || fallback).toUpperCase();
+}
+
+function countBy(items, selectValue) {
+  const output = {};
+  for (const item of items) {
+    const key = selectValue(item);
+    if (!key) continue;
+    output[key] = (output[key] || 0) + 1;
+  }
+  return output;
+}
+
+function extractDominantError(errors = []) {
+  if (!errors.length) return "No batch errors recorded";
+  const counts = countBy(errors, (entry) => entry?.error || "Unknown batch error");
+  const [message] = Object.entries(counts).sort((left, right) => right[1] - left[1])[0] || [];
+  return message || "Unknown batch error";
+}
+
+function deriveBlockerIssue(blockedSubmissions, blockedServiceItems) {
+  if (!blockedSubmissions.length) {
+    return {
+      code: null,
+      affectedClaims: 0,
+      affectedServiceItems: 0,
+      description: "No blocker claims in the current live batch.",
+    };
+  }
+
+  return {
+    code: "BLOCKER_RECODE_96092-ERR",
+    affectedClaims: blockedSubmissions.length,
+    affectedServiceItems: blockedServiceItems,
+    description: "Service code unknown in contract. Claims must be recoded before resubmission.",
+  };
+}
+
+function buildBatchPortfolio(submissions, eligibleSubmissions, summary, hospitalId) {
+  const blockedSubmissions = submissions.filter((submission) => !eligibleSubmissions.includes(submission));
+  const appealDeadline = submissions[0]?.appealDeadline || null;
+  const now = new Date();
+  const deadline = appealDeadline ? new Date(appealDeadline) : null;
+  const totalServiceItems = submissions.reduce((sum, submission) => sum + ((submission.rejections || []).length || 0), 0);
+  const readyServiceItems = eligibleSubmissions.reduce((sum, submission) => sum + ((submission.rejections || []).length || 0), 0);
+  const blockedServiceItems = totalServiceItems - readyServiceItems;
+  const byPriority = countBy(submissions, (submission) => safeUpper(submission.priority, "NORMAL"));
+  const byRejectionCode = {};
+
+  for (const submission of submissions) {
+    const codes = Array.from(new Set(
+      (submission.rejectionCodes || submission.rejections?.map((rejection) => rejection.reason) || [])
+        .filter(Boolean)
+    ));
+    for (const code of codes) {
+      byRejectionCode[code] = (byRejectionCode[code] || 0) + 1;
+    }
+  }
+
+  const criticalClaims = submissions
+    .filter((submission) => safeUpper(submission.priority, "NORMAL") === "CRITICAL")
+    .slice(0, 5)
+    .map((submission) => ({
+      bundleId: submission.bundleId,
+      patientName: submission.patientName,
+      focus: submission.specialNote || (submission.rejectionCodes || []).join(", ") || "Priority appeal",
+      priority: safeUpper(submission.priority, "NORMAL"),
+    }));
+
+  const blockerClaims = blockedSubmissions
+    .slice(0, 10)
+    .map((submission) => ({
+      bundleId: submission.bundleId,
+      patientName: submission.patientName,
+      reason: submission.specialNote || "96092-ERR recode required",
+      priority: safeUpper(submission.priority, "BLOCKER"),
+    }));
+
+  return {
+    batchId: submissions[0]?.batchId || summary.sourceBatchId || null,
+    payer: submissions[0]?.payer || null,
+    provider: submissions[0]?.provider || null,
+    appealDeadline,
+    withinWindow: deadline ? deadline >= now : null,
+    hospital: hospitalId,
+    totalClaims: submissions.length,
+    readyClaims: eligibleSubmissions.length,
+    blockedClaims: blockedSubmissions.length,
+    byPriority,
+    byRejectionCode,
+    totalServiceItems,
+    readyServiceItems,
+    blockedServiceItems,
+    blockerIssue: deriveBlockerIssue(blockedSubmissions, blockedServiceItems),
+    criticalClaims,
+    blockerClaims,
+  };
+}
+
+function normalizeLatestBatchSummary(summary) {
+  if (!summary) return null;
+
+  return {
+    runId: summary.batchId,
+    sourceBatchId: summary.sourceBatchId || summary.portfolio?.batchId || null,
+    hospital: summary.hospital || summary.portfolio?.hospital || null,
+    totalEligible: summary.total || 0,
+    processed: summary.processed || 0,
+    go: summary.go || 0,
+    partial: summary.partial || 0,
+    noGo: summary.noGo || 0,
+    errorCount: summary.errors || 0,
+    dominantError: extractDominantError(summary.errorDetails),
+    completedAt: summary.completedAt || null,
+    durationMs: summary.durationMs || 0,
+    portfolio: summary.portfolio || null,
+  };
+}
+
+async function getLatestBatchSummary(env) {
+  const latestPointer = await env.RESULTS.get("system:latest-batch-key");
+  if (latestPointer) {
+    const summary = await env.RESULTS.get(latestPointer, { type: "json" });
+    if (summary) return summary;
+  }
+
+  const listed = await env.RESULTS.list({ prefix: "batch:" });
+  if (!listed.keys.length) return null;
+
+  const latestKey = listed.keys
+    .map((entry) => entry.name)
+    .sort((left, right) => {
+      const leftValue = Number(left.match(/(\d+)$/)?.[1] || 0);
+      const rightValue = Number(right.match(/(\d+)$/)?.[1] || 0);
+      return rightValue - leftValue;
+    })[0];
+
+  return latestKey ? env.RESULTS.get(latestKey, { type: "json" }) : null;
+}
+
+async function getWatchlistResults(env, bundleIds) {
+  const ids = Array.from(new Set(bundleIds.filter(Boolean))).slice(0, WATCHLIST_LIMIT);
+  const entries = await Promise.all(ids.map(async (bundleId) => {
+    const result = await env.RESULTS.get(`result:${bundleId}`, { type: "json" });
+    return {
+      bundleId,
+      available: !!result,
+      gateStatus: result?.gateStatus || "UNSEEN",
+      transactionStatus: result?.transactionStatus || null,
+      transactionOutcome: result?.transactionOutcome || null,
+      scannedAt: result?.scannedAt || null,
+      gateReason: result?.gateReason || [],
+      oracleFound: !!result?.oracleFound,
+      error: result?.error || null,
+    };
+  }));
+
+  return entries;
+}
+
+async function getScannerStatusSnapshot(env) {
+  const hospitalSessions = {};
+  for (const [hospitalId, config] of Object.entries(HOSPITALS)) {
+    const session = await env.SESSIONS.get(`oracle_session_${hospitalId}`, { type: "json" });
+    hospitalSessions[hospitalId] = {
+      name: config.name,
+      baseUrl: config.baseUrl,
+      session: session ? "active" : "none",
+      sessionCookies: session?.length || 0,
+    };
+  }
+
+  return {
+    status: "ok",
+    defaultHospital: env.DEFAULT_HOSPITAL || DEFAULT_HOSPITAL,
+    hospitals: hospitalSessions,
+    timestamp: new Date().toISOString(),
+    description: "COMPLIANCELINC Multi-Hospital Oracle Claim Scanner",
   };
 }
 
@@ -540,15 +855,25 @@ async function handleBatch(request, env) {
 
   const durationMs = Date.now() - t0;
   const summary = {
-    batchId, total: eligible.length, processed: results.length,
+    batchId,
+    sourceBatchId: body.batchId || submissions[0]?.batchId || null,
+    hospital: hospitalId,
+    total: eligible.length,
+    processed: results.length,
     go: results.filter(r => r.gateStatus === "GO").length,
     partial: results.filter(r => r.gateStatus === "PARTIAL").length,
     noGo: results.filter(r => r.gateStatus === "NO_GO").length,
-    errors: errors.length, errorDetails: errors,
-    results, completedAt: new Date().toISOString(), durationMs
+    errors: errors.length,
+    errorDetails: errors,
+    results,
+    completedAt: new Date().toISOString(),
+    durationMs,
   };
 
+  summary.portfolio = buildBatchPortfolio(submissions, eligible, summary, hospitalId);
+
   await env.RESULTS.put(`batch:${batchId}`, JSON.stringify(summary), { expirationTtl: 86400 });
+  await env.RESULTS.put("system:latest-batch-key", `batch:${batchId}`, { expirationTtl: 86400 });
   return json(summary);
 }
 
@@ -559,27 +884,21 @@ async function handleGetResult(bundleId, env) {
   return json(result);
 }
 
+async function handleGetBatch(batchId, env) {
+  const result = await env.RESULTS.get(`batch:${batchId}`, { type: "json" });
+  if (!result) return json({ error: "Not found", batchId }, 404);
+  return json(result);
+}
+
+async function handleLatestBatch(env) {
+  const result = await getLatestBatchSummary(env);
+  if (!result) return json({ error: "No live batch found" }, 404);
+  return json(result);
+}
+
 // ─── Status check ─────────────────────────────────────────────────────────────
 async function handleStatus(env) {
-  // Check sessions for all hospitals
-  const hospitalSessions = {};
-  for (const [hospitalId, config] of Object.entries(HOSPITALS)) {
-    const session = await env.SESSIONS.get(`oracle_session_${hospitalId}`, { type: "json" });
-    hospitalSessions[hospitalId] = {
-      name: config.name,
-      baseUrl: config.baseUrl,
-      session: session ? "active" : "none",
-      sessionCookies: session?.length || 0
-    };
-  }
-  
-  return json({
-    status:        "ok",
-    defaultHospital: env.DEFAULT_HOSPITAL || DEFAULT_HOSPITAL,
-    hospitals:     hospitalSessions,
-    timestamp:     new Date().toISOString(),
-    description:   "COMPLIANCELINC Multi-Hospital Oracle Claim Scanner",
-  });
+  return json(await getScannerStatusSnapshot(env));
 }
 
 // ─── Metrics tracking ─────────────────────────────────────────────────────────
@@ -610,6 +929,40 @@ async function handleMetrics(env) {
   };
   metrics.avgDurationMs = metrics.totalScans > 0 ? Math.round(metrics.totalDurationMs / metrics.totalScans) : 0;
   return json(metrics);
+}
+
+async function handleControlTowerClaims(request, env) {
+  const url = new URL(request.url);
+  const watchlist = (url.searchParams.get("watch") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const [metrics, latestBatch, scannerStatus, watchedClaims] = await Promise.all([
+    env.RESULTS.get("system:metrics", { type: "json" }),
+    getLatestBatchSummary(env),
+    getScannerStatusSnapshot(env),
+    getWatchlistResults(env, watchlist),
+  ]);
+
+  const normalizedMetrics = metrics || {
+    totalScans: 0,
+    successfulScans: 0,
+    failedScans: 0,
+    totalDurationMs: 0,
+    avgDurationMs: 0,
+  };
+  normalizedMetrics.avgDurationMs = normalizedMetrics.totalScans > 0
+    ? Math.round((normalizedMetrics.totalDurationMs || 0) / normalizedMetrics.totalScans)
+    : (normalizedMetrics.avgDurationMs || 0);
+
+  return json({
+    generatedAt: new Date().toISOString(),
+    metrics: normalizedMetrics,
+    scannerStatus,
+    latestBatch: normalizeLatestBatchSummary(latestBatch),
+    watchlist: watchedClaims,
+  });
 }
 
 // ─── Health endpoint ──────────────────────────────────────────────────────────
@@ -1171,6 +1524,385 @@ async function handleDebugClick(request, env) {
       relativePath: urlAfter.replace(/^https?:\/\/[^/]+/, ''),
       pageState,
       screenshot: `data:image/jpeg;base64,${screenshot}`,
+    });
+  } catch (e) {
+    try { await browser?.close(); } catch {}
+    return json({ error: e.message, hospital: hospitalId }, 500);
+  }
+}
+
+// ─── Debug: navigate to Api Transactions and search by date/bundleId ────────
+// GET /debug/api-scan?hospital=riyadh&from=01/03/2026&to=31/03/2026&bundleId=xxx
+async function handleDebugApiScan(request, env) {
+  const url = new URL(request.url);
+  const hospitalId  = url.searchParams.get("hospital") || env.DEFAULT_HOSPITAL || DEFAULT_HOSPITAL;
+  const fromDate    = url.searchParams.get("from") || "";
+  const toDate      = url.searchParams.get("to") || "";
+  const bundleId    = url.searchParams.get("bundleId") || "";
+  if (!HOSPITALS[hospitalId]) return json({ error: `Unknown hospital: ${hospitalId}` }, 400);
+
+  const hospitalConfig = { id: hospitalId, ...HOSPITALS[hospitalId] };
+  let browser;
+  try {
+    browser = await puppeteer.launch(env.BROWSER);
+    const { page, sessionRestored } = await prepareOracleSession(browser, env, hospitalConfig);
+
+    // Open hamburger
+    await page.evaluate(() => {
+      const el = document.getElementById('pt1:OasisHedarToolBar:hamburgerBtn')
+        || document.querySelector('[id$=":hamburgerBtn"]');
+      if (el) el.click();
+    });
+    await sleep(3000);
+
+    // Navigate to Api Transactions
+    const clickInfo = await page.evaluate(() => {
+      const sidebar = document.getElementById('pt1:r1') || document.body;
+      for (const span of sidebar.querySelectorAll('.os-treeview-item-text')) {
+        if ((span.innerText || span.textContent || '').trim() === 'Api Transactions') {
+          const row = span.closest('.os-treeview-item-content') || span.parentElement;
+          row.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+          const r = row.getBoundingClientRect();
+          return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }
+      }
+      return { found: false };
+    });
+    if (!clickInfo.found) return json({ error: 'Api Transactions not found in sidebar' }, 500);
+    await page.mouse.move(clickInfo.x, clickInfo.y);
+    await page.mouse.down(); await sleep(80); await page.mouse.up();
+    try { await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 }); } catch { await sleep(4000); }
+
+    // Helper to normalize date to Oracle format
+    function toOracleDate(raw, eod) {
+      if (!raw) return raw;
+      const m1 = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m1) return `${m1[1]}-${m1[2]}-${m1[3]} ${eod ? '23:59:59' : '00:00:00'}`;
+      return raw;
+    }
+
+    // Get selectors for date/bundle fields for real keyboard interaction
+    const selectors = await page.evaluate(() => {
+      const contentArea = document.getElementById('pt1:contrRg') || document.body;
+      function getSelector(el) {
+        if (!el) return null;
+        // Use full id attribute as CSS selector
+        return '#' + CSS.escape(el.id);
+      }
+      return {
+        fromSel: getSelector(contentArea.querySelector('[id*="fi2:id1::content"], [id*=":id1::content"]')),
+        toSel:   getSelector(contentArea.querySelector('[id*="fi3:id2::content"], [id*=":id2::content"]')),
+        bundleSel: getSelector(contentArea.querySelector('textarea[id*="BUNDELID"]')),
+        allInputIds: Array.from(contentArea.querySelectorAll('input, textarea, select'))
+          .map(el => ({ id: el.id.slice(-60), type: el.type || el.tagName.toLowerCase() }))
+      };
+    });
+
+    const fillResult = { fromFilled: false, toFilled: false, bundleFilled: false, allInputIds: selectors.allInputIds };
+
+    // Fill From Date using real keyboard interaction
+    if (selectors.fromSel && fromDate) {
+      const fromVal = toOracleDate(fromDate, false);
+      await page.click(selectors.fromSel, { clickCount: 3 });
+      await sleep(100);
+      await page.keyboard.type(fromVal, { delay: 30 });
+      await page.keyboard.press('Tab');
+      await sleep(300);
+      fillResult.fromFilled = true;
+    }
+
+    // Fill To Date using real keyboard interaction
+    if (selectors.toSel && toDate) {
+      const toVal = toOracleDate(toDate, true);
+      await page.click(selectors.toSel, { clickCount: 3 });
+      await sleep(100);
+      await page.keyboard.type(toVal, { delay: 30 });
+      await page.keyboard.press('Tab');
+      await sleep(300);
+      fillResult.toFilled = true;
+    }
+
+    // Fill Bundle ID
+    if (selectors.bundleSel && bundleId) {
+      await page.click(selectors.bundleSel, { clickCount: 3 });
+      await sleep(100);
+      await page.keyboard.type(bundleId, { delay: 10 });
+      await sleep(200);
+      fillResult.bundleFilled = true;
+    }
+
+    await sleep(500);
+
+    // Click View button
+    const viewClicked = await page.evaluate(() => {
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      for (const el of area.querySelectorAll('button, a, input[type="button"], input[type="submit"]')) {
+        if (!el.offsetParent) continue;
+        const txt = (el.innerText || el.value || el.getAttribute('title') || '').trim().toLowerCase();
+        if (txt === 'view' || txt === 'search' || txt === 'go') {
+          el.click(); return { text: txt, id: el.id };
+        }
+      }
+      return null;
+    });
+
+    try { await page.waitForNetworkIdle({ idleTime: 1000, timeout: 12000 }); } catch { await sleep(6000); }
+
+    // Extract results
+    const txResult = await page.evaluate(() => {
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      const visibleText = (area.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 3000);
+      const noData = visibleText.toLowerCase().includes('no data to display');
+
+      const rows = Array.from(area.querySelectorAll('tr'))
+        .filter(r => r.offsetParent && r.querySelectorAll('td').length >= 5);
+      const txRows = rows.slice(0, 30).map(r =>
+        Array.from(r.querySelectorAll('td')).map(td => (td.innerText || '').trim().replace(/\s+/g, ' '))
+      );
+
+      return { visibleText, noData, txRows };
+    });
+
+    const screenshot = await page.screenshot({ encoding: "base64", type: "jpeg", quality: 55 });
+    await browser.close();
+
+    return json({
+      hospital: hospitalId, sessionRestored, fromDate, toDate, bundleId,
+      fillResult, viewClicked, noData: txResult.noData,
+      txRows: txResult.txRows.slice(0, 20),
+      visibleText: txResult.visibleText.slice(0, 2000),
+      screenshot: `data:image/jpeg;base64,${screenshot}`
+    });
+  } catch (e) {
+    try { await browser?.close(); } catch {}
+    return json({ error: e.message, hospital: hospitalId }, 500);
+  }
+}
+
+// ─── Debug: search Manage Claims page with period dates ──────────────────────
+async function handleDebugManageClaims(request, env) {
+  const url = new URL(request.url);
+  const hospitalId = url.searchParams.get("hospital") || env.DEFAULT_HOSPITAL || DEFAULT_HOSPITAL;
+  const fromDate   = url.searchParams.get("from") || "2026-02-01";  // YYYY-MM-DD or DD-MM-YYYY
+  const toDate     = url.searchParams.get("to")   || "2026-02-28";
+  if (!HOSPITALS[hospitalId]) return json({ error: `Unknown hospital: ${hospitalId}` }, 400);
+
+  const hospitalConfig = { id: hospitalId, ...HOSPITALS[hospitalId] };
+
+  // Normalize date to DD-MM-YYYY format for Manage Claims
+  function toDDMMYYYY(raw) {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    return raw; // already in target format
+  }
+
+  let browser;
+  try {
+    browser = await puppeteer.launch(env.BROWSER);
+    const { page, sessionRestored } = await prepareOracleSession(browser, env, hospitalConfig);
+
+    // Open hamburger sidebar
+    await page.evaluate(() => {
+      const el = document.getElementById('pt1:OasisHedarToolBar:hamburgerBtn')
+        || document.querySelector('[id$=":hamburgerBtn"]');
+      if (el) el.click();
+    });
+    await sleep(3000);
+
+    // Navigate to Manage Claims
+    const clickInfo = await page.evaluate(() => {
+      const sidebar = document.getElementById('pt1:r1') || document.body;
+      for (const span of sidebar.querySelectorAll('.os-treeview-item-text')) {
+        const txt = (span.innerText || span.textContent || '').trim();
+        if (txt === 'Manage Claims') {
+          const row = span.closest('.os-treeview-item-content') || span.parentElement;
+          row.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+          const r = row.getBoundingClientRect();
+          return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }
+      }
+      return { found: false };
+    });
+    if (!clickInfo.found) return json({ error: 'Manage Claims not found in sidebar' }, 500);
+
+    await page.mouse.move(clickInfo.x, clickInfo.y);
+    await page.mouse.down(); await sleep(80); await page.mouse.up();
+    try { await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 }); } catch { await sleep(4000); }
+
+    // Get field selectors
+    const selectors = await page.evaluate(() => {
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      const inputs = Array.from(area.querySelectorAll('input[id*="::content"], select[id*="::content"]'));
+      const result = { allIds: inputs.map(el => ({ id: el.id.slice(-70), type: el.type || el.tagName })) };
+      // Period Start >= (val00), Period Start <= (val10)
+      for (const el of inputs) {
+        if (el.id.includes('val00')) result.fromSel = '#' + CSS.escape(el.id);
+        if (el.id.includes('val10')) result.toSel   = '#' + CSS.escape(el.id);
+      }
+      return result;
+    });
+
+    const fromVal = toDDMMYYYY(fromDate);
+    const toVal   = toDDMMYYYY(toDate);
+    const fillResult = { fromFilled: false, toFilled: false, fromVal, toVal };
+
+    // ADF date inputs: use keyboard but press Escape first to dismiss any calendar popup
+    // Strategy: Tab to field, Escape to close popup, Ctrl+A to select all, type value, Tab to commit
+    async function fillAdfDate(sel, val) {
+      if (!sel) return false;
+      try {
+        // Click, Escape to dismiss calendar popup that opens on click, then select-all + type
+        await page.click(sel);
+        await sleep(150);
+        await page.keyboard.press('Escape');
+        await sleep(100);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('a');
+        await page.keyboard.up('Control');
+        await sleep(50);
+        await page.keyboard.type(val, { delay: 25 });
+        await sleep(100);
+        // Tab to next field to commit
+        await page.keyboard.press('Tab');
+        await sleep(400);
+        return true;
+      } catch { return false; }
+    }
+
+    // Get field selectors (val00=from, val10=to)
+    const fromSel = selectors.fromSel;
+    const toSel   = selectors.toSel;
+
+    fillResult.fromFilled = await fillAdfDate(fromSel, fromVal);
+    fillResult.toFilled   = await fillAdfDate(toSel, toVal);
+
+    // Verify what values actually ended up in the fields
+    const actualValues = await page.evaluate(() => {
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      const vals = {};
+      for (const input of area.querySelectorAll('input[id*="::content"]')) {
+        if (input.id.includes('val00')) vals.fromActual = input.value;
+        if (input.id.includes('val10')) vals.toActual   = input.value;
+      }
+      return vals;
+    });
+    Object.assign(fillResult, actualValues);
+
+    await sleep(300);
+
+    // Click View button
+    const viewClicked = await page.evaluate(() => {
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      for (const el of area.querySelectorAll('button, a, input[type="button"]')) {
+        if (!el.offsetParent) continue;
+        const txt = (el.innerText || el.value || el.getAttribute('title') || '').trim().toLowerCase();
+        if (txt === 'view' || txt === 'search' || txt === 'find') {
+          el.click(); return { text: txt, id: el.id };
+        }
+      }
+      return null;
+    });
+
+    try { await page.waitForNetworkIdle({ idleTime: 1000, timeout: 12000 }); } catch { await sleep(6000); }
+
+    // After Search: check if Approved link exists in right panel and click via scrollIntoView
+    let approvedLink = { found: false };
+    try {
+      approvedLink = await page.evaluate(() => {
+        const area = document.getElementById('pt1:contrRg') || document.body;
+        for (const a of area.querySelectorAll('a')) {
+          if (!a.offsetParent) continue;
+          const t = (a.innerText || '').trim().replace(/\s+/g, ' ');
+          if (/^Approved/i.test(t)) {
+            a.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+            return { found: true, text: t, id: a.id };
+          }
+        }
+        return { found: false };
+      });
+      if (approvedLink.found) {
+        await sleep(400);
+        // Use evaluate to actually click it (avoids coordinate off-screen issues)
+        await page.evaluate((id) => {
+          const a = id ? document.getElementById(id) : null;
+          if (a) { a.click(); return; }
+          // fallback: search by text
+          const area = document.getElementById('pt1:contrRg') || document.body;
+          for (const el of area.querySelectorAll('a')) {
+            if (/^Approved/i.test((el.innerText || '').trim())) { el.click(); return; }
+          }
+        }, approvedLink.id);
+        try { await page.waitForNetworkIdle({ idleTime: 1000, timeout: 10000 }); } catch { await sleep(5000); }
+        // Scroll down to see the claim data table that appears below the summary panel
+        await page.evaluate(() => window.scrollBy(0, 600));
+        await sleep(1000);
+        // Scroll more to reveal data rows
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await sleep(800);
+      }
+    } catch(e) { approvedLink = { found: false, error: e.message }; }
+
+    // Extract claim rows + summary panel
+    const claimResult = await page.evaluate(() => {
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      const fullText = (area.innerText || '').replace(/\s+/g, ' ').trim();
+      const visibleText = fullText.slice(0, 3000);
+      const noData = fullText.toLowerCase().includes('no data to display') &&
+                     !fullText.match(/Approved\s+\d+|Ready\s+Since|Month\s*\+/i);
+      const formError = fullText.includes('These fields are required');
+
+      // Try to extract summary stats from right panel (numbers after "Approved", "Ready To Download", etc.)
+      const summary = {};
+      const approvedM = fullText.match(/Approved\s+(\d[\d,]*)/i);
+      const readyM    = fullText.match(/Ready\s+To\s+Download\s+(\d[\d,]*)/i);
+      const expensesM = fullText.match(/Expenses\s+([\d,.]+)/i);
+      if (approvedM) summary.approved = approvedM[1];
+      if (readyM)    summary.readyToDownload = readyM[1];
+      if (expensesM) summary.expenses = expensesM[1];
+
+      // Look for actual claim data rows — match rows with period/date patterns
+      // Claim data rows contain: "MMM - YYYY" period, "DD-MM-YYYY" dates, numeric amounts
+      const PERIOD_RE   = /^[A-Z]{3,}\s*[-–]\s*\d{4}$/;   // e.g. "SEP - 2023", "FEB - 2026"
+      const DATE_RE     = /^\d{2}-\d{2}-\d{4}$/;            // DD-MM-YYYY
+      const NUMERIC_RE  = /^[\d,]+(\.\d+)?$/;               // amounts
+      // Calendar popup rows: cells are pure day-numbers or weekday abbrevs
+      const CALENDAR_CELL_RE = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat|\d{1,2})$/;
+
+      let claimRows = [];
+      for (const r of document.querySelectorAll('tr')) {
+        const tds = Array.from(r.querySelectorAll('td'));
+        if (tds.length < 3 || tds.length > 15) continue;
+        const cells = tds.map(td => (td.innerText || '').trim().replace(/\s+/g, ' ')).filter(c => c);
+        if (cells.length < 3) continue;
+        // Skip calendar popup rows (weekday names or pure day numbers)
+        if (cells.every(c => CALENDAR_CELL_RE.test(c))) continue;
+        // Skip form label rows
+        if (cells[0].includes('Period Start') || cells[0].includes('Payer') || cells[0].includes('Affiliates')) continue;
+        // Skip header rows
+        if (/^(Period|Start Date|End Date|Update Date|Amount|Errors|Episodes)$/i.test(cells[0])) continue;
+        // Accept rows that have period or date pattern in first 3 cells
+        const hasPeriodOrDate = cells.slice(0, 3).some(c => PERIOD_RE.test(c) || DATE_RE.test(c));
+        if (!hasPeriodOrDate) continue;
+        // Exclude rows with UI noise
+        if (cells.some(c => c.length > 150)) continue;
+        claimRows.push(cells);
+        if (claimRows.length >= 50) break;
+      }
+
+      return { visibleText, noData, formError, summary, claimRows };
+    });
+
+    const screenshot = await page.screenshot({ encoding: "base64", type: "jpeg", quality: 55 });
+    await browser.close();
+
+    return json({
+      hospital: hospitalId, sessionRestored, fromDate, toDate,
+      fillResult, selectors: { fromSel: selectors.fromSel, toSel: selectors.toSel },
+      viewClicked, approvedLink, noData: claimResult.noData, formError: claimResult.formError,
+      summary: claimResult.summary,
+      claimRows: claimResult.claimRows.slice(0, 20),
+      visibleText: claimResult.visibleText.slice(0, 2000),
+      screenshot: `data:image/jpeg;base64,${screenshot}`
     });
   } catch (e) {
     try { await browser?.close(); } catch {}
