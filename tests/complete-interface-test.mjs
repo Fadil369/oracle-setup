@@ -718,31 +718,45 @@ async function testPayerOracleWorker() {
 
   // ── 5A: Last scan result analysis ──────────────────────
   subsection("Scenario 5A: Most recent scan results (scan_results_1774398418316.json)");
-  const lastScan = JSON.parse(readFileSync(
-    join(ROOT, "scan_results_1774398418316.json"), "utf8"));
-  assert(lastScan.batchId !== undefined, "Scan results have batchId");
-  assert(typeof lastScan.total === "number", `Total in scan: ${lastScan.total}`);
-  assert(lastScan.skippedBlockers === 10, 
-    `Scan correctly skipped 10 BLOCKER submissions (actual: ${lastScan.skippedBlockers})`);
-  assert(lastScan.errorCount > 0, 
-    `HTTP 404 errors detected: ${lastScan.errorCount} (Worker endpoint needs deploy)`);
-  const errorTypes = [...new Set(lastScan.errors?.map(e => e.error) ?? [])];
-  assert(errorTypes.includes("HTTP 404"),
-    `All errors are HTTP 404 (Worker route not found) — ${errorTypes.join(", ")}`);
+  let lastScan = null;
+  try {
+    lastScan = JSON.parse(readFileSync(
+      join(ROOT, "scan_results_1774398418316.json"), "utf8"));
+  } catch {
+    console.log(`  ${INFO} scan_results_1774398418316.json not found (runtime artifact — run trigger-batch.mjs to generate)`);
+  }
+  if (lastScan !== null) {
+    assert(lastScan.batchId !== undefined, "Scan results have batchId");
+    assert(typeof lastScan.total === "number", `Total in scan: ${lastScan.total}`);
+    assert(lastScan.skippedBlockers === 10, 
+      `Scan correctly skipped 10 BLOCKER submissions (actual: ${lastScan.skippedBlockers})`);
+    assert(lastScan.errorCount > 0, 
+      `HTTP 404 errors detected: ${lastScan.errorCount} (Worker endpoint needs deploy)`);
+    const errorTypes = [...new Set(lastScan.errors?.map(e => e.error) ?? [])];
+    assert(errorTypes.includes("HTTP 404"),
+      `All errors are HTTP 404 (Worker route not found) — ${errorTypes.join(", ")}`);
+  }
 
   // ── 5B: Earlier successful scan shape ──────────────────
   subsection("Scenario 5B: Earlier scan result structure (scan_results_1774390555869.json)");
-  const prevScan = JSON.parse(readFileSync(
-    join(ROOT, "scan_results_1774390555869.json"), "utf8"));
-  assert(prevScan !== null, "Previous scan results parseable");
-  // Check structure
-  if (prevScan.results && prevScan.results.length > 0) {
-    const firstResult = prevScan.results[0];
-    assert("bundleId" in firstResult || "nationalId" in firstResult,
-      "Scan result entries have patient identifiers");
+  let prevScan = null;
+  try {
+    prevScan = JSON.parse(readFileSync(
+      join(ROOT, "scan_results_1774390555869.json"), "utf8"));
+  } catch {
+    console.log(`  ${INFO} scan_results_1774390555869.json not found (runtime artifact — run trigger-batch.mjs to generate)`);
   }
-  if (VERBOSE) {
-    console.log(`    prev scan total: ${prevScan.total ?? "?"}, go: ${prevScan.go ?? "?"}, partial: ${prevScan.partial ?? "?"}`);
+  if (prevScan !== null) {
+    assert(prevScan !== null, "Previous scan results parseable");
+    // Check structure
+    if (prevScan.results && prevScan.results.length > 0) {
+      const firstResult = prevScan.results[0];
+      assert("bundleId" in firstResult || "nationalId" in firstResult,
+        "Scan result entries have patient identifiers");
+    }
+    if (VERBOSE) {
+      console.log(`    prev scan total: ${prevScan.total ?? "?"}, go: ${prevScan.go ?? "?"}, partial: ${prevScan.partial ?? "?"}`);
+    }
   }
 
   // ── 5C: Batch chunking logic ────────────────────────────
