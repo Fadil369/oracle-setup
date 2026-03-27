@@ -129,7 +129,7 @@ setSecret("ORACLE_PASS", oraclePass);
 
 // ── 7. Deploy ─────────────────────────────────────────────────────────────────
 console.log("\n  Deploying Worker...");
-run("wrangler deploy");
+run("wrangler deploy --config wrangler.scanner.toml");
 
 // ── 8. Test /status ───────────────────────────────────────────────────────────
 console.log("\n  Testing deployed Worker...");

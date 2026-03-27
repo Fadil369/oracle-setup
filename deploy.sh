@@ -6,7 +6,7 @@ set -euo pipefail
 TARGET="${WORKER_TARGET:-portals}"
 
 if [[ "$TARGET" == "scanner" ]]; then
-	npx wrangler deploy --config wrangler.toml
+	npx wrangler deploy --config wrangler.scanner.toml
 else
-	npx wrangler deploy --config infra-v3/portals-worker/wrangler.toml
+	npx wrangler deploy --config wrangler.toml
 fi
