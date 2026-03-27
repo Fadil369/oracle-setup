@@ -4,6 +4,7 @@
   "description": "COMPLIANCELINC — Oracle Oasis+ claim scanner on Cloudflare Workers",
   "main": "src/index.js",
   "scripts": {
+    "build": "npm run lint && npm test",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "setup": "node setup.mjs",
