@@ -6,7 +6,9 @@
   "scripts": {
     "build": "npm run lint && npm test",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run deploy:portals",
+    "deploy:portals": "wrangler deploy --config infra-v3/portals-worker/wrangler.toml",
+    "deploy:scanner": "wrangler deploy --config wrangler.toml",
     "setup": "node setup.mjs",
     "lint": "eslint . --ext .js,.mjs",
     "test": "node tests/complete-interface-test.mjs",
