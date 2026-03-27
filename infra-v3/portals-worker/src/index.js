@@ -1271,6 +1271,37 @@ async function buildControlTowerSnapshot(env, options = {}) {
   return createControlTowerSnapshot(branchHealth, externalHealth, claims, options);
 }
 
+// ── Rate limiter (KV-backed, per IP, sliding 60-second window) ───────────────
+// Limits requests to expensive live-probe endpoints to prevent abuse.
+// Gracefully skips if PORTAL_KV is not provisioned.
+async function checkRateLimit(request, env, limit = 30) {
+  if (!env.PORTAL_KV) return null; // KV not provisioned — skip gracefully
+
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const window = Math.floor(Date.now() / 60_000); // 1-minute window
+  const key = `ratelimit:${ip}:${window}`;
+
+  let count = 0;
+  try {
+    const stored = await env.PORTAL_KV.get(key, "text");
+    count = stored ? parseInt(stored, 10) : 0;
+  } catch {
+    return null; // KV read failed — allow the request
+  }
+
+  if (count >= limit) {
+    return json(
+      { error: "Too many requests. Please wait before retrying.", retryAfterSeconds: 60 },
+      429,
+      { "Retry-After": "60", "X-RateLimit-Limit": String(limit), "X-RateLimit-Remaining": "0" }
+    );
+  }
+
+  // Increment counter asynchronously — don't block the response
+  env.PORTAL_KV.put(key, String(count + 1), { expirationTtl: 120 }).catch(() => {});
+  return null;
+}
+
 // ── API key guard helper ──────────────────────────────────────────────────────
 function requireApiKey(request, env, url) {
   const allowUnauthenticated = env.ALLOW_UNAUTHENTICATED === "1" || env.ALLOW_UNAUTHENTICATED === "true";
@@ -1297,9 +1328,10 @@ function requireApiKey(request, env, url) {
 // ── Main fetch handler ────────────────────────────────────────────────────────
 export default {
   // ── HTTP requests ─────────────────────────────────────────────────────────
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    const requestId = crypto.randomUUID();
 
     // CORS preflight
     if (request.method === "OPTIONS") {
@@ -1308,15 +1340,19 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
           "Access-Control-Max-Age": "86400",
+          ...SEC_HEADERS,
         },
       });
     }
 
-    // Simple liveness
+    // Simple liveness (no probing — instant response)
     if (path === "/health") {
-      return new Response("ok", { status: 200 });
+      return new Response("ok", {
+        status: 200,
+        headers: { "Content-Type": "text/plain", ...SEC_HEADERS },
+      });
     }
 
     if (path === "/api/runbooks") {
@@ -1340,23 +1376,48 @@ export default {
       if (!runbook) {
         return new Response("Runbook not found", { status: 404 });
       }
-      return new Response(renderRunbookPage(runbook), {
-        headers: {
-          "Content-Type": "text/html;charset=utf-8",
-          "Cache-Control": "no-store",
-        },
-      });
+      return new Response(renderRunbookPage(runbook), { headers: HTML_HEADERS });
     }
 
     if (path === "/api/control-tower/summary") {
+      // Prefer KV-cached result (written by cron every 5 min) to avoid live probing on every request
+      if (env.PORTAL_KV) {
+        const cached = await env.PORTAL_KV.get("control-tower:summary:latest", "text");
+        if (cached) {
+          return new Response(cached, {
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+              "Cache-Control": "public, max-age=300, stale-if-error=600",
+              "X-Cache": "HIT",
+              ...SEC_HEADERS,
+            },
+          });
+        }
+      }
       const summarySnapshot = await buildControlTowerSnapshot(env, {
         includeInternals: false,
         includeDetails: false,
       });
-      return json(summarySnapshot);
+      return json(summarySnapshot, 200, { "X-Cache": "MISS" });
     }
 
     if (path === "/api/control-tower/details") {
+      // Prefer KV-cached result (written by cron every 5 min) to avoid live probing on every request
+      if (env.PORTAL_KV) {
+        const cached = await env.PORTAL_KV.get("control-tower:details:latest", "text");
+        if (cached) {
+          return new Response(cached, {
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+              "Cache-Control": "public, max-age=300, stale-if-error=600",
+              "X-Cache": "HIT",
+              ...SEC_HEADERS,
+            },
+          });
+        }
+      }
       const detailSnapshot = await buildControlTowerSnapshot(env, {
         includeInternals: false,
         includeDetails: true,
@@ -1371,17 +1432,19 @@ export default {
         claims: detailSnapshot.claims,
         runbooks: detailSnapshot.runbooks,
         priorityActions: detailSnapshot.priorityActions,
-      });
+      }, 200, { "X-Cache": "MISS" });
     }
 
     if (path === "/api/control-tower") {
       const denied = requireApiKey(request, env, url);
       if (denied) return denied;
+      const rateLimited = await checkRateLimit(request, env, 10);
+      if (rateLimited) return rateLimited;
       const snapshot = await buildControlTowerSnapshot(env, {
         includeInternals: true,
         includeDetails: true,
       });
-      return json(snapshot);
+      return json(snapshot, 200, { "X-Request-ID": requestId });
     }
 
     // Proxy /api/scan/:branch → oracle-claim-scanner Worker (FIX-7)
@@ -1435,6 +1498,8 @@ export default {
 
     // JSON health of all branches (public — used by COMPLIANCELINC scanner)
     if (path === "/api/health") {
+      const rateLimited = await checkRateLimit(request, env, 20);
+      if (rateLimited) return rateLimited;
       const health = await probeAllBranches();
       const online = Object.values(health).filter(h => h.online).length;
       return json({
@@ -1473,19 +1538,14 @@ export default {
         includeInternals: false,
         includeDetails: true,
       });
-      return new Response(renderDashboard(snapshot), {
-        headers: {
-          "Content-Type": "text/html;charset=utf-8",
-          "Cache-Control": "no-store",
-        },
-      });
+      return new Response(renderDashboard(snapshot), { headers: HTML_HEADERS });
     } catch (err) {
       console.error("Dashboard render failed:", err.message);
       return new Response(
         `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unavailable</title></head>` +
         `<body style="font-family:sans-serif;padding:2rem"><h1>Dashboard temporarily unavailable</h1>` +
-        `<p>${escapeHtmlBasic(err.message)}</p><a href="/">Retry</a></body></html>`,
-        { status: 503, headers: { "Content-Type": "text/html;charset=utf-8" } }
+        `<p>Service error. Please retry.</p><a href="/">Retry</a></body></html>`,
+        { status: 503, headers: HTML_HEADERS }
       );
     }
   },
@@ -1690,6 +1750,12 @@ function renderDashboard(snapshot) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BrainSAIT Healthcare Control Tower</title>
+<meta name="description" content="BrainSAIT live operational control tower — hospital network health, claims pipeline, and infrastructure posture for the Saudi healthcare estate.">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta property="og:title" content="BrainSAIT Healthcare Control Tower">
+<meta property="og:description" content="Live hospital network health, claims operations, and infrastructure posture.">
+<meta property="og:type" content="website">
 <style>
   @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap");
 
@@ -3030,13 +3096,45 @@ function renderDashboard(snapshot) {
 </html>`;
 }
 
-function json(data, status = 200) {
+// ── Shared security headers (applied to every response) ──────────────────────
+const SEC_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+  "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+};
+
+// ── HTML Content-Security-Policy (dashboard pages) ───────────────────────────
+const HTML_CSP = [
+  "default-src 'self'",
+  "script-src 'unsafe-inline'",               // inline <script> blocks only
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
+// Extra headers added to rendered HTML responses
+const HTML_HEADERS = {
+  "Content-Type": "text/html;charset=utf-8",
+  "Cache-Control": "no-store",
+  "Content-Security-Policy": HTML_CSP,
+  ...SEC_HEADERS,
+};
+
+function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "no-store",
+      ...SEC_HEADERS,
+      ...extra,
     },
   });
 }
