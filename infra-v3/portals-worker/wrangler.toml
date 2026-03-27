@@ -1,6 +1,6 @@
 name = "brainsait-portals"
 main = "src/index.js"
-compatibility_date = "2024-11-01"
+compatibility_date = "2025-01-01"
 account_id = "d7b99530559ab4f2545e9bdc72a7ab9b"
 
 # Serve on portals.elfadil.com
@@ -19,8 +19,12 @@ id      = "079016c359c348e180724cdd76f29129"
 [triggers]
 crons = ["*/5 * * * *"]
 
+# Observability (Workers Tail / Logpush)
+[observability]
+enabled = true
+
 # Secrets:
-#   wrangler secret put API_KEY    ← protects /api/* endpoints
+#   wrangler secret put API_KEY    ← protects /api/control-tower and /api/scan/:branch
 [vars]
 SCANNER_URL = "https://oracle-scanner.elfadil.com"
 

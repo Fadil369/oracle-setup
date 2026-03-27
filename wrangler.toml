@@ -1,6 +1,6 @@
 name              = "oracle-claim-scanner"
 main              = "src/index.js"
-compatibility_date  = "2024-11-01"
+compatibility_date  = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 account_id        = "d7b99530559ab4f2545e9bdc72a7ab9b"
 
@@ -24,6 +24,10 @@ id      = "b1785b723f824a1f839b5289e6fad536"
 [[kv_namespaces]]
 binding = "RESULTS"
 id      = "639ac84ff0c540f9b9cded716ae65f06"
+
+# ── Observability (Workers Tail / Logpush) ────────────────────────────────────
+[observability]
+enabled = true
 
 # ── Secrets (set via CLI — never commit plaintext) ────────────────────────────
 #
