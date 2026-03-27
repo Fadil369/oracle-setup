@@ -34,6 +34,44 @@
 
 ---
 
+## ⚡ Quick Start
+
+```bash
+# Install Node dependencies
+npm ci
+
+# Create a local env file for the Oracle dev stack
+npm run configure
+
+# Launch the local Oracle developer environment
+npm run oracle:dev
+
+# Check local stack status
+npm run oracle:status
+
+# Run repo validation
+npm run build
+```
+
+### Local developer stack
+
+- `docker/docker-compose.yml` runs an Oracle Free developer database with persisted local storage.
+- `scripts/brainsait-oracle.mjs` provides reusable deploy, backup, status, and migrate commands.
+- `infrastructure/terraform/` models the same Oracle developer stack as infrastructure-as-code.
+- `infrastructure/ansible/` bootstraps a host and deploys the Oracle dev stack with Docker.
+
+### Control plane deploy API
+
+Protected deployment orchestration is exposed on `POST /api/deploy/oracle` from the portals worker.
+
+- `action=plan` returns the deployment plan and prerequisites.
+- `action=validate` checks webhook and secret readiness.
+- `action=trigger` sends a deployment request to a configured webhook.
+
+This keeps the control plane at the edge while delegating actual host-side execution to a trusted deploy runner.
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -69,6 +107,24 @@
 │  └──────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Target platform expansion
+
+```text
+BrainSAIT Platform
+├── Portal control center
+├── Deployment engine
+├── Oracle automation and claims scanning
+├── Identity and access layer
+├── Observability stack
+└── Healthcare integration services
+```
+
+### Architecture docs
+
+- [docs/architecture.md](docs/architecture.md) describes the target BrainSAIT control-center architecture.
+- [docs/deployment.md](docs/deployment.md) documents local, CI, and production deployment flows.
+- [docs/security.md](docs/security.md) describes secret management and edge security controls.
 
 ---
 
@@ -111,6 +167,7 @@
 |--------|----------|-------------|
 | `GET` | `/api/control-tower` | Combined snapshot: hospitals + services + claims |
 | `GET/POST` | `/api/scan/:branch` | Proxy to oracle-claim-scanner Worker |
+| `GET/POST` | `/api/deploy/oracle` | Plan, validate, or trigger Oracle stack deployment |
 
 ---
 
@@ -310,6 +367,20 @@ Access runbooks via the dashboard at `portals.elfadil.com/runbooks/:id` or via t
 
 ```
 oracle-setup/
+├── .github/workflows/             # CI, security scans, and deployment validation
+├── docker/                        # Local Oracle developer stack
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── infrastructure/
+│   ├── ansible/                   # Host bootstrap and deployment automation
+│   └── terraform/                 # IaC for the Oracle developer stack
+├── portal/
+│   └── api-gateway/               # API contract for control-plane integration
+├── scripts/
+│   ├── brainsait-oracle.mjs       # Reusable CLI entrypoint
+│   ├── install.sh                 # Local install wrapper
+│   ├── configure.sh               # Env bootstrap wrapper
+│   └── healthcheck.sh             # Local health probe wrapper
 ├── src/
 │   └── index.js                  # oracle-claim-scanner Worker (Puppeteer)
 ├── infra-v3/
@@ -321,10 +392,11 @@ oracle-setup/
 │   └── fhir/                     # FHIR R4 bundle builder + validator (Python)
 ├── fhir-integration/
 │   └── index.mjs                 # FHIR integration entry point
+├── docs/                         # Architecture, deployment, and security guides
 ├── sbs-integration/              # SBS catalogue + SNOMED map
-├── uhh-integration/              # TypeScript FHIR client (UHH)
 ├── tests/
 │   └── complete-interface-test.mjs  # End-to-end interface test suite (160 tests)
+├── uhh-integration/              # TypeScript FHIR client (UHH)
 ├── wrangler.toml                 # Scanner Worker config
 └── README.md                     # This file
 ```

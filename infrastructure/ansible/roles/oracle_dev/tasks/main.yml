@@ -1,0 +1,42 @@
+---
+- name: Install deployment prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - docker.io
+      - docker-compose-plugin
+      - git
+    state: present
+    update_cache: true
+
+- name: Ensure Docker is enabled
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Create application root
+  ansible.builtin.file:
+    path: "{{ brainsait_root }}"
+    state: directory
+    mode: "0755"
+
+- name: Checkout oracle-setup
+  ansible.builtin.git:
+    repo: "{{ brainsait_repo_url }}"
+    dest: "{{ brainsait_root }}"
+    version: "{{ brainsait_repo_ref }}"
+    update: true
+
+- name: Seed environment file when missing
+  ansible.builtin.copy:
+    src: "{{ brainsait_root }}/.env.example"
+    dest: "{{ brainsait_root }}/.env"
+    remote_src: true
+    force: false
+
+- name: Start Oracle developer stack
+  ansible.builtin.command:
+    cmd: docker compose -f docker/docker-compose.yml up -d
+    chdir: "{{ brainsait_root }}"

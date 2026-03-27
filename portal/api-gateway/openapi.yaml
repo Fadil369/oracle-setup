@@ -1,0 +1,72 @@
+openapi: 3.1.0
+info:
+  title: BrainSAIT Control Plane API
+  version: 1.0.0
+  description: API contract for the BrainSAIT control center and Oracle deployment surface.
+servers:
+  - url: https://portals.elfadil.com
+paths:
+  /api/control-tower:
+    get:
+      summary: Return the full control-tower snapshot.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Snapshot returned.
+  /api/scan/{branch}:
+    post:
+      summary: Trigger an Oracle scan for a specific branch.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: path
+          name: branch
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Scan accepted.
+  /api/deploy/oracle:
+    get:
+      summary: Return deployment metadata and capability information.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Deployment plan returned.
+    post:
+      summary: Plan, validate, or trigger Oracle deployment.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [plan, validate, trigger]
+                target:
+                  type: string
+                  enum: [local-dev, portals, scanner, platform]
+                ref:
+                  type: string
+                composeFile:
+                  type: string
+                dryRun:
+                  type: boolean
+      responses:
+        '200':
+          description: Plan or validation result returned.
+        '202':
+          description: Deployment trigger accepted.
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

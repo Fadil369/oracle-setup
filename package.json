@@ -1,14 +1,22 @@
 {
-  "name": "oracle-claim-scanner",
+  "name": "oracle-setup",
   "version": "1.0.0",
-  "description": "COMPLIANCELINC — Oracle Oasis+ claim scanner on Cloudflare Workers",
+  "description": "BrainSAIT control plane, Oracle scanner, and infrastructure automation toolkit",
   "main": "src/index.js",
+  "bin": {
+    "brainsait-oracle": "./scripts/brainsait-oracle.mjs"
+  },
   "scripts": {
     "build": "npm run lint && npm test",
+    "cli": "node scripts/brainsait-oracle.mjs",
+    "configure": "bash scripts/configure.sh",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:portals": "wrangler deploy --config wrangler.toml",
     "deploy:scanner": "wrangler deploy --config wrangler.scanner.toml",
+    "oracle:dev": "node scripts/brainsait-oracle.mjs deploy --target local-dev",
+    "oracle:status": "node scripts/brainsait-oracle.mjs status",
+    "oracle:backup": "node scripts/brainsait-oracle.mjs backup",
     "setup": "node setup.mjs",
     "lint": "eslint . --ext .js,.mjs",
     "test": "node tests/complete-interface-test.mjs",

@@ -1,0 +1,6 @@
+---
+- name: Bootstrap BrainSAIT Oracle developer stack
+  hosts: oracle_hosts
+  become: true
+  roles:
+    - oracle_dev

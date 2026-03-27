@@ -25,6 +25,8 @@ security-reports/
 artifacts/
 scan_results_*.json
 scan_results_*.csv
+.data/
+backups/
 
 # Python cache
 __pycache__/

@@ -1,0 +1,77 @@
+name: Deploy Oracle Stack Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy.yml'
+      - 'docker/**'
+      - 'infrastructure/**'
+      - 'scripts/**'
+      - '.env.example'
+      - 'package.json'
+      - 'package-lock.json'
+
+jobs:
+  validate-oracle-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare local env
+        run: cp .env.example .env
+
+      - name: CLI smoke test
+        run: node scripts/brainsait-oracle.mjs status --format json --skip-remote
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infrastructure/terraform
+
+      - name: Terraform validate
+        working-directory: infrastructure/terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Compose config check
+        run: docker compose -f docker/docker-compose.yml config
+
+      - name: Launch Oracle Free stack
+        run: docker compose -f docker/docker-compose.yml up -d
+
+      - name: Wait for Oracle health
+        run: |
+          for attempt in $(seq 1 30); do
+            status="$(docker inspect --format '{{.State.Health.Status}}' brainsait-oracle-dev 2>/dev/null || true)"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          docker logs brainsait-oracle-dev || true
+          exit 1
+
+      - name: Collect CLI status
+        run: node scripts/brainsait-oracle.mjs status --format json --skip-remote
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v

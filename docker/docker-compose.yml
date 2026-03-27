@@ -1,0 +1,25 @@
+name: brainsait-oracle-dev
+
+services:
+  oracle-db:
+    image: gvenzl/oracle-free:23-slim
+    container_name: brainsait-oracle-dev
+    restart: unless-stopped
+    ports:
+      - "${ORACLE_PORT:-1521}:1521"
+      - "${ORACLE_EM_PORT:-5500}:5500"
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-oracle_dev_password}
+      APP_USER: ${APP_USER:-brainsait}
+      APP_USER_PASSWORD: ${APP_USER_PASSWORD:-brainsait_app_password}
+      ORACLE_DATABASE: ${ORACLE_PDB:-FREEPDB1}
+      ORACLE_SID: ${ORACLE_SID:-FREE}
+    volumes:
+      - ../.data/oracle:/opt/oracle/oradata
+      - ../docker/initdb:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s

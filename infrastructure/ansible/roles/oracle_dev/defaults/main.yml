@@ -1,0 +1,4 @@
+---
+brainsait_repo_url: https://github.com/Fadil369/oracle-setup.git
+brainsait_repo_ref: main
+brainsait_root: /opt/brainsait/oracle-setup

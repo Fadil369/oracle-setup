@@ -20,6 +20,7 @@
  *   GET      /api/control-tower/summary → redacted lightweight snapshot (public)
  *   GET      /api/control-tower/details → redacted detailed snapshot (public)
  *   GET      /api/control-tower    → combined snapshot with internals (requires API key)
+ *   GET/POST /api/deploy/oracle    → plan, validate, or trigger Oracle deployment (requires X-API-Key)
  *   GET      /api/runbooks         → runbook index for the action queue
  *   GET      /api/runbooks/:id     → runbook JSON detail
  *   GET/POST /api/scan/:branch     → proxy to oracle-claim-scanner Worker (requires X-API-Key)
@@ -145,6 +146,13 @@ const AUTOMATION_PLAYBOOKS = [
     title: "Daily Executive Digest",
     detail: "Publish hospital performance, claim movement, and tunnel health into one morning report.",
   },
+];
+
+const DEPLOYMENT_STEPS = [
+  "Clone or update the oracle-setup repository on the deployment runner.",
+  "Render secrets into the runtime environment without committing plaintext values.",
+  "Launch the Oracle developer stack or production stack with the approved compose file.",
+  "Run health checks and publish the resulting status back to the control plane.",
 ];
 
 const SECURITY_GUARDRAILS = [
@@ -1292,6 +1300,14 @@ function buildIntegrationSnapshot(hospitals, claims, env) {
       status: "connected",
       signal: "Repository metadata is connected to the control plane.",
     },
+    deploymentApi: {
+      status: env.DEPLOY_WEBHOOK_URL ? "connected" : "watch",
+      endpoint: "/api/deploy/oracle",
+      mode: env.DEPLOY_WEBHOOK_URL ? "webhook-trigger" : "plan-only",
+      signal: env.DEPLOY_WEBHOOK_URL
+        ? "Deployment API can hand off Oracle stack requests to the configured runner."
+        : "Deployment API is available in plan mode; configure DEPLOY_WEBHOOK_URL to enable triggers.",
+    },
     tunnel: {
       status: tunnelStatus,
       totalHospitals,
@@ -1321,6 +1337,145 @@ function buildIntegrationSnapshot(hospitals, claims, env) {
         : "Scanner feed degraded; operating on fallback claim references.",
     },
   };
+}
+
+function buildOracleDeploymentPlan(env, payload = {}) {
+  const repo = {
+    owner: env.REPO_OWNER || "Fadil369",
+    name: env.REPO_NAME || "oracle-setup",
+    branch: payload.ref || env.REPO_BRANCH || "main",
+    url: env.REPO_URL || "https://github.com/Fadil369/oracle-setup",
+  };
+
+  const target = payload.target || "local-dev";
+  const composeFile = payload.composeFile || (target === "platform" ? "docker-compose.production.yml" : "docker/docker-compose.yml");
+  const deployCommand = target === "platform"
+    ? `docker compose -f ${composeFile} up -d`
+    : `node scripts/brainsait-oracle.mjs deploy --target ${target}`;
+
+  return {
+    requestedAt: new Date().toISOString(),
+    action: payload.action || "plan",
+    target,
+    composeFile,
+    repo,
+    steps: DEPLOYMENT_STEPS,
+    commands: {
+      configure: "node scripts/brainsait-oracle.mjs configure",
+      deploy: deployCommand,
+      status: "node scripts/brainsait-oracle.mjs status --format json",
+      backup: "node scripts/brainsait-oracle.mjs backup",
+    },
+    requiredSecrets: [
+      "API_KEY",
+      "ORACLE_PASSWORD",
+      "APP_USER_PASSWORD",
+      "CLOUDFLARE_API_TOKEN",
+      "DATABASE_URL",
+    ],
+    capabilities: {
+      plan: true,
+      validate: true,
+      trigger: !!env.DEPLOY_WEBHOOK_URL,
+    },
+  };
+}
+
+function parseOptionalJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function handleOracleDeploy(request, env, url) {
+  const accessDenied = await requireAccessJwt(request, env);
+  if (accessDenied) return accessDenied;
+
+  const denied = requireApiKey(request, env, url);
+  if (denied) return denied;
+
+  if (request.method === "GET") {
+    return json({
+      deployment: buildOracleDeploymentPlan(env),
+      webhookConfigured: !!env.DEPLOY_WEBHOOK_URL,
+      endpoint: "/api/deploy/oracle",
+    }, 200, { request, env });
+  }
+
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed" }, 405, { request, env });
+  }
+
+  let payload = {};
+  const contentType = request.headers.get("Content-Type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      payload = await request.json();
+    } catch {
+      return json({ error: "Invalid JSON body" }, 400, { request, env });
+    }
+  }
+
+  const action = payload.action || "plan";
+  const deployment = buildOracleDeploymentPlan(env, payload);
+  const missingSecrets = deployment.requiredSecrets.filter((name) => !env[name]);
+
+  if (action === "plan" || action === "validate") {
+    return json({
+      status: action === "validate" ? (missingSecrets.length ? "not-ready" : "ready") : "planned",
+      deployment,
+      validation: {
+        webhookConfigured: !!env.DEPLOY_WEBHOOK_URL,
+        missingSecrets,
+      },
+    }, 200, { request, env });
+  }
+
+  if (action !== "trigger") {
+    return json({ error: `Unsupported action: ${action}` }, 400, { request, env });
+  }
+
+  if (!env.DEPLOY_WEBHOOK_URL) {
+    return json({
+      error: "DEPLOY_WEBHOOK_URL is not configured",
+      deployment,
+    }, 501, { request, env });
+  }
+
+  const operator = request.headers.get("CF-Access-Authenticated-User-Email") || "api-key-client";
+  const webhookHeaders = {
+    "Content-Type": "application/json",
+  };
+
+  if (env.DEPLOY_WEBHOOK_TOKEN) {
+    webhookHeaders.Authorization = `Bearer ${env.DEPLOY_WEBHOOK_TOKEN}`;
+  }
+
+  const webhookResponse = await fetch(env.DEPLOY_WEBHOOK_URL, {
+    method: "POST",
+    headers: webhookHeaders,
+    body: JSON.stringify({
+      ...deployment,
+      operator,
+      metadata: payload.metadata || null,
+      dryRun: payload.dryRun === true,
+      source: "portals.elfadil.com/api/deploy/oracle",
+    }),
+  });
+
+  const responseText = await webhookResponse.text();
+  return json({
+    status: webhookResponse.ok ? "accepted" : "rejected",
+    deployment,
+    webhook: {
+      url: env.DEPLOY_WEBHOOK_URL,
+      status: webhookResponse.status,
+      body: parseOptionalJson(responseText),
+    },
+  }, webhookResponse.ok ? 202 : 502, { request, env });
 }
 
 function parseAllowedOrigins(env, fallback = []) {
@@ -1701,6 +1856,10 @@ export default {
         includeDetails: true,
       });
       return json(snapshot, 200, { "X-Request-ID": requestId });
+    }
+
+    if (path === "/api/deploy/oracle") {
+      return handleOracleDeploy(request, env, url);
     }
 
     // Proxy /api/scan/:branch → oracle-claim-scanner Worker (FIX-7)
@@ -3270,6 +3429,15 @@ function renderDashboard(snapshot) {
             meta: i.portals?.summaryEndpoint || "/api/control-tower/summary",
             link: i.portals?.url || "https://portals.elfadil.com",
             linkLabel: "Open portals frontend",
+          },
+          {
+            eyebrow: "Deployment API",
+            title: "Oracle deployment orchestration",
+            status: i.deploymentApi?.status || "watch",
+            signal: i.deploymentApi?.signal || "Deployment API state unavailable.",
+            meta: i.deploymentApi?.mode || "plan-only",
+            link: i.deploymentApi?.endpoint || "/api/deploy/oracle",
+            linkLabel: "Open deploy endpoint",
           },
           {
             eyebrow: "Scanner integration",
