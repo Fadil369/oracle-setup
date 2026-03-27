@@ -37,7 +37,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/oracle-claim-scanner:${{ github.ref_name }}
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ghcr.io/${{ github.repository_owner }}/oracle-claim-scanner:${{ github.ref_name }}
           format: table
@@ -59,16 +59,31 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-scan-push
     if: success()
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
+      - name: Request GitHub OIDC token
+        id: oidc
+        env:
+          DEPLOY_WEBHOOK_AUDIENCE: ${{ vars.DEPLOY_WEBHOOK_AUDIENCE || 'oracle-setup-deploy' }}
+        run: |
+          response="$(curl -fsSL -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${DEPLOY_WEBHOOK_AUDIENCE}")"
+          token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<< "${response}")"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
       - name: Trigger deployment webhook
         env:
           DEPLOY_WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           if [ -z "${DEPLOY_WEBHOOK_URL}" ]; then
             echo "DEPLOY_WEBHOOK_URL is not set; skipping deploy trigger."
             exit 0
           fi
+
           curl -fsSL -X POST "${DEPLOY_WEBHOOK_URL}" \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -d '{"service":"oracle-claim-scanner","version":"'"${GITHUB_REF_NAME}"'"}'
