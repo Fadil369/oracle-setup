@@ -1188,6 +1188,7 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims, option
   const hospitalSummary = summarizeServices(hospitals);
   const externalSummary = summarizeServices(externalServices);
   const allResponsive = [...hospitals, ...externalServices].filter(item => item.online);
+  const integrations = buildIntegrationSnapshot(hospitals, claims, options.env || {});
 
   const snapshot = {
     timestamp: new Date().toISOString(),
@@ -1206,6 +1207,7 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims, option
           : null,
       },
     },
+    integrations,
     hospitals,
     externalServices,
     claims,
@@ -1223,6 +1225,7 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims, option
       timestamp: snapshot.timestamp,
       meta: snapshot.meta,
       summary: snapshot.summary,
+      integrations: snapshot.integrations,
       hospitals: snapshot.hospitals.map((hospital) => ({
         id: hospital.id,
         kind: hospital.kind,
@@ -1268,7 +1271,248 @@ async function buildControlTowerSnapshot(env, options = {}) {
   ]);
 
   const claims = buildClaimsSnapshot(scannerFeed, externalHealth);
-  return createControlTowerSnapshot(branchHealth, externalHealth, claims, options);
+  return createControlTowerSnapshot(branchHealth, externalHealth, claims, { ...options, env });
+}
+
+function buildIntegrationSnapshot(hospitals, claims, env) {
+  const totalHospitals = hospitals.length;
+  const onlineHospitals = hospitals.filter((h) => h.online).length;
+  const degradedHospitals = hospitals.filter((h) => h.tone === "watch").length;
+  const offlineHospitals = hospitals.filter((h) => h.tone === "critical").length;
+  const tunnelStatus = offlineHospitals > 0 ? "degraded" : (degradedHospitals > 0 ? "watch" : "healthy");
+  const scannerLive = !!claims?.scanner?.liveSystem?.available;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    repo: {
+      name: env.REPO_NAME || "oracle-setup",
+      owner: env.REPO_OWNER || "Fadil369",
+      branch: env.REPO_BRANCH || "main",
+      url: env.REPO_URL || "https://github.com/Fadil369/oracle-setup",
+      status: "connected",
+      signal: "Repository metadata is connected to the control plane.",
+    },
+    tunnel: {
+      status: tunnelStatus,
+      totalHospitals,
+      onlineHospitals,
+      degradedHospitals,
+      offlineHospitals,
+      signal: offlineHospitals > 0
+        ? `${offlineHospitals} branch tunnels need remediation.`
+        : degradedHospitals > 0
+          ? `${degradedHospitals} branch tunnels are reachable but slow.`
+          : "All monitored branch tunnels are healthy.",
+      runbookHref: "/runbooks/hospital-connectivity",
+    },
+    portals: {
+      status: "healthy",
+      url: "https://portals.elfadil.com",
+      summaryEndpoint: "/api/control-tower/summary",
+      detailEndpoint: "/api/control-tower/details",
+      signal: "Portals control plane is serving live snapshots.",
+    },
+    scanner: {
+      status: scannerLive ? "connected" : "degraded",
+      mode: claims?.sourceMode || "fallback-reference",
+      sourceSummary: claims?.sourceSummary || "Scanner state unavailable",
+      signal: scannerLive
+        ? "Scanner telemetry is live via service binding or upstream endpoint."
+        : "Scanner feed degraded; operating on fallback claim references.",
+    },
+  };
+}
+
+function parseAllowedOrigins(env, fallback = []) {
+  const raw = env.CORS_ALLOWED_ORIGINS || "";
+  const parsed = raw
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  return parsed.length ? parsed : fallback;
+}
+
+function resolveCorsOrigin(request, env) {
+  const allowed = parseAllowedOrigins(env, ["https://portals.elfadil.com"]);
+  const origin = request.headers.get("Origin");
+
+  if (!origin) return allowed[0] || null;
+  if (allowed.includes("*")) return "*";
+  if (allowed.includes(origin)) return origin;
+  return null;
+}
+
+function corsHeaders(request, env, methods) {
+  const origin = resolveCorsOrigin(request, env);
+  if (!origin) return null;
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": methods,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, CF-Access-Jwt-Assertion",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+function pemToArrayBuffer(pem) {
+  const b64 = pem
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .replace(/\s+/g, "");
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function b64urlToUint8Array(input) {
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob(padded);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+function parseJwtHeader(token) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const headerRaw = new TextDecoder().decode(b64urlToUint8Array(parts[0]));
+  return JSON.parse(headerRaw);
+}
+
+function parseJwtPayload(token) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const payloadRaw = new TextDecoder().decode(b64urlToUint8Array(parts[1]));
+  return JSON.parse(payloadRaw);
+}
+
+async function verifyAccessJwt(token, env) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return { valid: false, reason: "Malformed token" };
+
+  const [headerB64, payloadB64, signatureB64] = parts;
+  const header = parseJwtHeader(token);
+  if (!header) return { valid: false, reason: "Malformed token header" };
+  if (header.alg !== "RS256") return { valid: false, reason: "Unsupported token algorithm" };
+
+  const payload = parseJwtPayload(token);
+  if (!payload) return { valid: false, reason: "Invalid token payload" };
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp === "number" && payload.exp < now) return { valid: false, reason: "Token expired" };
+  if (typeof payload.nbf === "number" && payload.nbf > now) return { valid: false, reason: "Token not active yet" };
+
+  const audience = env.CF_ACCESS_AUD;
+  const audClaim = payload.aud;
+  const audOk = Array.isArray(audClaim) ? audClaim.includes(audience) : audClaim === audience;
+  if (!audOk) return { valid: false, reason: "Invalid token audience" };
+
+  const signedData = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+  const signature = b64urlToUint8Array(signatureB64);
+
+  const certUrl = env.CF_ACCESS_CERTS_URL
+    || (env.CF_ACCESS_TEAM_DOMAIN ? `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs` : null);
+
+  if (certUrl) {
+    const certs = await fetchCfAccessCerts(certUrl);
+    const candidates = header.kid
+      ? certs.filter((jwk) => jwk.kid === header.kid)
+      : certs;
+
+    for (const jwk of candidates) {
+      try {
+        const key = await crypto.subtle.importKey(
+          "jwk",
+          jwk,
+          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+          false,
+          ["verify"]
+        );
+        const validSig = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signedData);
+        if (validSig) return { valid: true, payload };
+      } catch {
+        // Try next key.
+      }
+    }
+    if (!env.CF_ACCESS_JWT_PUBLIC_KEY) {
+      return { valid: false, reason: "Invalid token signature" };
+    }
+  }
+
+  if (env.CF_ACCESS_JWT_PUBLIC_KEY) {
+    const key = await crypto.subtle.importKey(
+      "spki",
+      pemToArrayBuffer(env.CF_ACCESS_JWT_PUBLIC_KEY),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const validSig = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signedData);
+    if (!validSig) return { valid: false, reason: "Invalid token signature" };
+    return { valid: true, payload };
+  }
+
+  return { valid: false, reason: "No verification key configured" };
+}
+
+const CERTS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function fetchCfAccessCerts(url) {
+  const cache = globalThis.__cfAccessCertCache || (globalThis.__cfAccessCertCache = new Map());
+  const now = Date.now();
+  const cached = cache.get(url);
+  if (cached && cached.expiresAt > now) return cached.keys;
+
+  const response = await fetch(url, { method: "GET" });
+  if (!response.ok) throw new Error(`Failed to fetch Access certs (${response.status})`);
+
+  const payload = await response.json();
+  const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+  if (!keys.length) throw new Error("Access cert response had no keys");
+
+  const cacheControl = response.headers.get("Cache-Control") || "";
+  const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
+  const ttlMs = maxAgeMatch ? Number(maxAgeMatch[1]) * 1000 : CERTS_CACHE_TTL_MS;
+
+  cache.set(url, { keys, expiresAt: now + Math.max(ttlMs, 30_000) });
+  return keys;
+}
+
+async function requireAccessJwt(request, env) {
+  const requireCfAccess = env.REQUIRE_CF_ACCESS === "1" || env.REQUIRE_CF_ACCESS === "true";
+  if (!requireCfAccess) return null;
+
+  const certUrl = env.CF_ACCESS_CERTS_URL
+    || (env.CF_ACCESS_TEAM_DOMAIN ? `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs` : null);
+
+  if ((!env.CF_ACCESS_JWT_PUBLIC_KEY && !certUrl) || !env.CF_ACCESS_AUD) {
+    return json(
+      { error: "Server misconfigured: configure CF_ACCESS_AUD and either CF_ACCESS_CERTS_URL/CF_ACCESS_TEAM_DOMAIN or CF_ACCESS_JWT_PUBLIC_KEY" },
+      503,
+      { request, env }
+    );
+  }
+
+  const token =
+    request.headers.get("CF-Access-Jwt-Assertion") ||
+    request.headers.get("cf-access-jwt-assertion") ||
+    "";
+
+  if (!token) {
+    return json({ error: "Missing Cloudflare Access token" }, 401, { request, env });
+  }
+
+  try {
+    const verification = await verifyAccessJwt(token, env);
+    if (!verification.valid) {
+      return json({ error: "Invalid Cloudflare Access token", reason: verification.reason }, 401, { request, env });
+    }
+  } catch (error) {
+    return json({ error: "Cloudflare Access token verification failed", reason: error.message }, 401, { request, env });
+  }
+  return null;
 }
 
 // ── Rate limiter (KV-backed, per IP, sliding 60-second window) ───────────────
@@ -1335,15 +1579,16 @@ export default {
 
     // CORS preflight
     if (request.method === "OPTIONS") {
+      const headers = corsHeaders(request, env, "GET, POST, OPTIONS");
+      if (!headers) {
+        return new Response(JSON.stringify({ error: "Origin not allowed" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       return new Response(null, {
         status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
-          "Access-Control-Max-Age": "86400",
-          ...SEC_HEADERS,
-        },
+        headers,
       });
     }
 
@@ -1432,10 +1677,21 @@ export default {
         claims: detailSnapshot.claims,
         runbooks: detailSnapshot.runbooks,
         priorityActions: detailSnapshot.priorityActions,
+        integrations: detailSnapshot.integrations,
       }, 200, { "X-Cache": "MISS" });
     }
 
+    if (path === "/api/integrations") {
+      const integrationSnapshot = await buildControlTowerSnapshot(env, {
+        includeInternals: false,
+        includeDetails: false,
+      });
+      return json(integrationSnapshot.integrations);
+    }
+
     if (path === "/api/control-tower") {
+      const accessDenied = await requireAccessJwt(request, env);
+      if (accessDenied) return accessDenied;
       const denied = requireApiKey(request, env, url);
       if (denied) return denied;
       const rateLimited = await checkRateLimit(request, env, 10);
@@ -1449,6 +1705,8 @@ export default {
 
     // Proxy /api/scan/:branch → oracle-claim-scanner Worker (FIX-7)
     if (path.startsWith("/api/scan/")) {
+      const accessDenied = await requireAccessJwt(request, env);
+      if (accessDenied) return accessDenied;
       const denied = requireApiKey(request, env, url);
       if (denied) return denied;
       const branchId = path.split("/api/scan/")[1];
@@ -1479,7 +1737,8 @@ export default {
           status: response.status,
           headers: {
             "Content-Type": response.headers.get("Content-Type") || "application/json",
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": resolveCorsOrigin(request, env) || "https://portals.elfadil.com",
+            Vary: "Origin",
             "Cache-Control": "no-store",
           },
         });
@@ -2079,6 +2338,7 @@ function renderDashboard(snapshot) {
   .section-header p { max-width: 62ch; }
 
   .layer-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .integration-grid,
   .hospital-grid,
   .service-grid,
   .claims-grid,
@@ -2379,6 +2639,33 @@ function renderDashboard(snapshot) {
   .delay-3 { animation-delay: 0.24s; }
   .delay-4 { animation-delay: 0.32s; }
 
+  .integration-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+  }
+
+  .integration-status {
+    min-height: 20px;
+  }
+
+  .integration-card {
+    display: grid;
+    gap: 10px;
+  }
+
+  .integration-card code {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.025);
+    padding: 10px 12px;
+    color: rgba(255,255,255,0.78);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+
   @keyframes fadeUp {
     to {
       opacity: 1;
@@ -2479,6 +2766,26 @@ function renderDashboard(snapshot) {
           </div>
         </aside>
       </div>
+    </section>
+
+    <section class="section-shell stack fade-up delay-1" id="integration-fabric">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Integration fabric</p>
+          <h2>Repository, tunnel, portals, and scanner connectivity</h2>
+        </div>
+        <p>This command center keeps engineering alignment visible: source repository health, branch tunnel posture, portals control-plane state, and scanner feed mode.</p>
+      </div>
+      <div class="integration-grid" id="integrationGrid">
+        <div class="empty-state">Loading integration connectivity cards...</div>
+      </div>
+      <div class="integration-actions">
+        <a id="openRepoLink" href="${snapshot.integrations?.repo?.url || "https://github.com/Fadil369/oracle-setup"}" target="_blank" rel="noopener noreferrer" class="primary-action">Open repository</a>
+        <button type="button" id="runIntegrationCheck" class="secondary-action">Run integration check</button>
+        <button type="button" id="openTunnelRunbook" class="secondary-action">Open tunnel runbook</button>
+        <button type="button" id="copyHealthCurl" class="secondary-action">Copy health curl</button>
+      </div>
+      <div class="toolbar-status integration-status" id="integrationStatus">Integration fabric ready.</div>
     </section>
 
     <section class="section-shell stack fade-up delay-1">
@@ -2749,6 +3056,12 @@ function renderDashboard(snapshot) {
         refs.refreshCountdown = document.getElementById("refreshCountdown");
         refs.lastUpdated = document.getElementById("lastUpdated");
         refs.refreshError = document.getElementById("refreshError");
+        refs.integrationGrid = document.getElementById("integrationGrid");
+        refs.integrationStatus = document.getElementById("integrationStatus");
+        refs.runIntegrationCheck = document.getElementById("runIntegrationCheck");
+        refs.openTunnelRunbook = document.getElementById("openTunnelRunbook");
+        refs.copyHealthCurl = document.getElementById("copyHealthCurl");
+        refs.openRepoLink = document.getElementById("openRepoLink");
 
         refs.search.addEventListener("input", (event) => {
           state.search = event.target.value || "";
@@ -2764,6 +3077,40 @@ function renderDashboard(snapshot) {
         });
 
         refs.refreshButton.addEventListener("click", () => refreshSnapshot(true));
+
+        refs.runIntegrationCheck.addEventListener("click", async () => {
+          refs.runIntegrationCheck.disabled = true;
+          setIntegrationStatus("Running integration check...", false);
+          try {
+            const response = await fetch("/api/integrations?ts=" + Date.now(), {
+              cache: "no-store",
+              headers: { "Accept": "application/json" },
+            });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const integrations = await response.json();
+            state.snapshot.integrations = integrations;
+            renderIntegrations();
+            setIntegrationStatus("Integration check completed.", false);
+          } catch (error) {
+            setIntegrationStatus("Integration check failed: " + (error.message || "unknown error"), true);
+          } finally {
+            refs.runIntegrationCheck.disabled = false;
+          }
+        });
+
+        refs.openTunnelRunbook.addEventListener("click", () => {
+          window.open("/runbooks/hospital-connectivity", "_blank", "noopener,noreferrer");
+        });
+
+        refs.copyHealthCurl.addEventListener("click", async () => {
+          const cmd = "curl -fsSL https://portals.elfadil.com/api/health && curl -fsSL https://portals.elfadil.com/api/control-tower/summary";
+          try {
+            await navigator.clipboard.writeText(cmd);
+            setIntegrationStatus("Health curl command copied to clipboard.", false);
+          } catch {
+            setIntegrationStatus("Clipboard blocked by browser; copy failed.", true);
+          }
+        });
 
         render();
         window.setInterval(() => refreshSnapshot(false), refreshIntervalMs);
@@ -2888,6 +3235,76 @@ function renderDashboard(snapshot) {
         ].join('');
       }
 
+      function statusChipClass(status) {
+        if (status === "healthy" || status === "connected") return "stable";
+        if (status === "watch") return "watch";
+        return "critical";
+      }
+
+      function renderIntegrations() {
+        const i = state.snapshot.integrations || {};
+        const cards = [
+          {
+            eyebrow: "Repository",
+            title: (i.repo?.owner || "Fadil369") + "/" + (i.repo?.name || "oracle-setup"),
+            status: i.repo?.status || "connected",
+            signal: i.repo?.signal || "Repository integration available.",
+            meta: "Branch: " + (i.repo?.branch || "main"),
+            link: i.repo?.url || "https://github.com/Fadil369/oracle-setup",
+            linkLabel: "Open GitHub repository",
+          },
+          {
+            eyebrow: "Tunnel mesh",
+            title: "Hospital branch tunnel posture",
+            status: i.tunnel?.status || "degraded",
+            signal: i.tunnel?.signal || "Tunnel state unavailable.",
+            meta: (i.tunnel?.onlineHospitals || 0) + "/" + (i.tunnel?.totalHospitals || 0) + " branches online",
+            link: i.tunnel?.runbookHref || "/runbooks/hospital-connectivity",
+            linkLabel: "Open remediation runbook",
+          },
+          {
+            eyebrow: "Portals plane",
+            title: "Control tower API",
+            status: i.portals?.status || "healthy",
+            signal: i.portals?.signal || "Control plane status unavailable.",
+            meta: i.portals?.summaryEndpoint || "/api/control-tower/summary",
+            link: i.portals?.url || "https://portals.elfadil.com",
+            linkLabel: "Open portals frontend",
+          },
+          {
+            eyebrow: "Scanner integration",
+            title: "Oracle claim scanner feed",
+            status: i.scanner?.status || "degraded",
+            signal: i.scanner?.signal || "Scanner feed state unavailable.",
+            meta: "Mode: " + (i.scanner?.mode || "fallback-reference"),
+            link: "/api/control-tower/details",
+            linkLabel: "Open detailed snapshot",
+          },
+        ];
+
+        refs.integrationGrid.innerHTML = cards.map((card) => [
+          '<article class="integration-card service-card tone-', escapeHtml(statusChipClass(card.status)), '">',
+            '<div class="service-top">',
+              '<div>',
+                '<p class="eyebrow">', escapeHtml(card.eyebrow), '</p>',
+                '<h3>', escapeHtml(card.title), '</h3>',
+              '</div>',
+              '<span class="status-chip ', escapeHtml(statusChipClass(card.status)), '">', escapeHtml(card.status), '</span>',
+            '</div>',
+            '<p>', escapeHtml(card.signal), '</p>',
+            '<code>', escapeHtml(card.meta), '</code>',
+            '<a class="secondary-link" href="', escapeHtml(card.link), '" target="_blank" rel="noopener noreferrer">', escapeHtml(card.linkLabel), '</a>',
+          '</article>'
+        ].join("")).join("");
+
+        if (refs.openRepoLink && i.repo?.url) refs.openRepoLink.href = i.repo.url;
+      }
+
+      function setIntegrationStatus(message, isError) {
+        refs.integrationStatus.textContent = message;
+        refs.integrationStatus.style.color = isError ? "var(--coral)" : "rgba(255,255,255,0.74)";
+      }
+
       function renderReasonCard(reason) {
         return [
           '<article class="service-card tone-', escapeHtml(reason.severity === 'critical' ? 'critical' : (reason.severity === 'high' ? 'watch' : 'stable')), '">',
@@ -2945,6 +3362,7 @@ function renderDashboard(snapshot) {
           ? claims.sourceSummary + " Scanner metrics: " + claims.scanner.liveSystem.totalScans + " total scans, " + claims.scanner.liveSystem.failedScans + " failures, avg " + claims.scanner.liveSystem.avgDurationMs + " ms. NPHIES is " + claims.upstreams.nphies.label.toLowerCase() + "."
           : claims.sourceSummary + " Latest known batch: " + claims.scanner.latestBatch.errorCount + " route errors, processed " + claims.scanner.latestBatch.processed + " of " + claims.scanner.latestBatch.totalEligible + " eligible claims.";
         refs.lastUpdated.textContent = "Last probe: " + new Date(state.snapshot.timestamp).toUTCString();
+        setIntegrationStatus("Integration fabric synced at " + new Date(state.snapshot.timestamp).toLocaleTimeString() + ".", false);
       }
 
       function renderHospitals() {
@@ -3022,6 +3440,7 @@ function renderDashboard(snapshot) {
             ...state.snapshot.summary,
             ...summarySnapshot.summary,
           },
+          integrations: summarySnapshot.integrations || state.snapshot.integrations,
         };
       }
 
@@ -3049,6 +3468,7 @@ function renderDashboard(snapshot) {
             actions: detailSnapshot.summary?.actions || state.snapshot.summary?.actions,
             claims: detailSnapshot.summary?.claims || state.snapshot.summary?.claims,
           },
+          integrations: detailSnapshot.integrations || state.snapshot.integrations,
         };
       }
 
@@ -3081,6 +3501,7 @@ function renderDashboard(snapshot) {
         renderExternalServices();
         renderClaims();
         renderActionQueue();
+        renderIntegrations();
         updateFilterButtons();
         updateRefreshStrip();
       }
@@ -3126,16 +3547,29 @@ const HTML_HEADERS = {
   ...SEC_HEADERS,
 };
 
-function json(data, status = 200, extra = {}) {
+function json(data, status = 200, extraOrContext = {}) {
+  const hasRequestContext = !!(extraOrContext && extraOrContext.request && extraOrContext.env);
+  const origin = hasRequestContext
+    ? resolveCorsOrigin(extraOrContext.request, extraOrContext.env)
+    : "https://portals.elfadil.com";
+
+  const extraHeaders = hasRequestContext
+    ? {}
+    : (extraOrContext || {});
+
+  const headers = {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    ...SEC_HEADERS,
+    Vary: "Origin",
+  };
+
+  if (origin) headers["Access-Control-Allow-Origin"] = origin;
+  Object.assign(headers, extraHeaders);
+
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-store",
-      ...SEC_HEADERS,
-      ...extra,
-    },
+    headers,
   });
 }
 

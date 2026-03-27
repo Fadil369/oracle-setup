@@ -3,6 +3,7 @@ name: brainsait-platform
 services:
   gateway:
     image: caddy:2.8
+    init: true
     restart: unless-stopped
     ports:
       - "80:80"
@@ -11,6 +12,22 @@ services:
       - ./infra/edge/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    depends_on:
+      portals-api:
+        condition: service_started
+      scanner-api:
+        condition: service_started
+      grafana:
+        condition: service_started
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
       interval: 30s
@@ -27,6 +44,7 @@ services:
 
   portals-api:
     image: ghcr.io/fadil369/brainsait-portals:latest
+    init: true
     restart: unless-stopped
     env_file:
       - .env.production
@@ -37,6 +55,14 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m
     deploy:
       resources:
         limits:
@@ -55,6 +81,7 @@ services:
 
   scanner-api:
     image: ghcr.io/fadil369/oracle-claim-scanner:latest
+    init: true
     restart: unless-stopped
     env_file:
       - .env.production
@@ -65,6 +92,14 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    tmpfs:
+      - /tmp:size=128m
     deploy:
       resources:
         limits:
@@ -91,9 +126,19 @@ services:
       - "4318"
       - "8889"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m
     networks:
       - observability
       - platform
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   prometheus:
     image: prom/prometheus:v3.2.1
@@ -106,8 +151,16 @@ services:
     expose:
       - "9090"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     networks:
       - observability
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   loki:
     image: grafana/loki:3.4.3
@@ -118,8 +171,37 @@ services:
     expose:
       - "3100"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     networks:
       - observability
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  promtail:
+    image: grafana/promtail:3.4.3
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./infra/observability/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    networks:
+      - observability
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   grafana:
     image: grafana/grafana:11.6.0
@@ -133,10 +215,19 @@ services:
     depends_on:
       - prometheus
       - loki
+      - promtail
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     networks:
       - observability
       - edge
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   edge:

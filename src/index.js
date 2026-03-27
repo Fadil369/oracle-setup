@@ -84,6 +84,198 @@ const LOGIN_PATH = "/prod/faces/Home";
 const SEARCH_PATH = "/prod/faces/PatientSearch";
 const WATCHLIST_LIMIT = 24;
 
+function parseAllowedOrigins(env, fallback = []) {
+  const raw = env.CORS_ALLOWED_ORIGINS || env.PORTALS_URL || "";
+  const parsed = raw
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  return parsed.length ? parsed : fallback;
+}
+
+function resolveCorsOrigin(request, env) {
+  const allowed = parseAllowedOrigins(env, ["https://portals.elfadil.com"]);
+  const origin = request.headers.get("Origin");
+
+  if (!origin) return allowed[0] || null;
+  if (allowed.includes("*")) return "*";
+  if (allowed.includes(origin)) return origin;
+  return null;
+}
+
+function corsHeaders(request, env, methods) {
+  const origin = resolveCorsOrigin(request, env);
+  if (!origin) return null;
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": methods,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, CF-Access-Jwt-Assertion",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+function pemToArrayBuffer(pem) {
+  const b64 = pem
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .replace(/\s+/g, "");
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function b64urlToUint8Array(input) {
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob(padded);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+function parseJwtHeader(token) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const headerRaw = new TextDecoder().decode(b64urlToUint8Array(parts[0]));
+  return JSON.parse(headerRaw);
+}
+
+function parseJwtPayload(token) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const payloadRaw = new TextDecoder().decode(b64urlToUint8Array(parts[1]));
+  return JSON.parse(payloadRaw);
+}
+
+async function verifyAccessJwt(token, env) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return { valid: false, reason: "Malformed token" };
+
+  const [headerB64, payloadB64, signatureB64] = parts;
+  const header = parseJwtHeader(token);
+  if (!header) return { valid: false, reason: "Malformed token header" };
+  if (header.alg !== "RS256") return { valid: false, reason: "Unsupported token algorithm" };
+
+  const payload = parseJwtPayload(token);
+  if (!payload) return { valid: false, reason: "Invalid token payload" };
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp === "number" && payload.exp < now) return { valid: false, reason: "Token expired" };
+  if (typeof payload.nbf === "number" && payload.nbf > now) return { valid: false, reason: "Token not active yet" };
+
+  const audience = env.CF_ACCESS_AUD;
+  const audClaim = payload.aud;
+  const audOk = Array.isArray(audClaim) ? audClaim.includes(audience) : audClaim === audience;
+  if (!audOk) return { valid: false, reason: "Invalid token audience" };
+
+  const signedData = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+  const signature = b64urlToUint8Array(signatureB64);
+
+  const certUrl = env.CF_ACCESS_CERTS_URL
+    || (env.CF_ACCESS_TEAM_DOMAIN ? `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs` : null);
+
+  if (certUrl) {
+    const certs = await fetchCfAccessCerts(certUrl);
+    const candidates = header.kid
+      ? certs.filter((jwk) => jwk.kid === header.kid)
+      : certs;
+
+    for (const jwk of candidates) {
+      try {
+        const key = await crypto.subtle.importKey(
+          "jwk",
+          jwk,
+          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+          false,
+          ["verify"]
+        );
+        const validSig = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signedData);
+        if (validSig) return { valid: true, payload };
+      } catch {
+        // Try next key.
+      }
+    }
+    if (!env.CF_ACCESS_JWT_PUBLIC_KEY) {
+      return { valid: false, reason: "Invalid token signature" };
+    }
+  }
+
+  if (env.CF_ACCESS_JWT_PUBLIC_KEY) {
+    const key = await crypto.subtle.importKey(
+      "spki",
+      pemToArrayBuffer(env.CF_ACCESS_JWT_PUBLIC_KEY),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const validSig = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signedData);
+    if (!validSig) return { valid: false, reason: "Invalid token signature" };
+    return { valid: true, payload };
+  }
+
+  return { valid: false, reason: "No verification key configured" };
+}
+
+const CERTS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function fetchCfAccessCerts(url) {
+  const cache = globalThis.__cfAccessCertCache || (globalThis.__cfAccessCertCache = new Map());
+  const now = Date.now();
+  const cached = cache.get(url);
+  if (cached && cached.expiresAt > now) return cached.keys;
+
+  const response = await fetch(url, { method: "GET" });
+  if (!response.ok) throw new Error(`Failed to fetch Access certs (${response.status})`);
+
+  const payload = await response.json();
+  const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+  if (!keys.length) throw new Error("Access cert response had no keys");
+
+  const cacheControl = response.headers.get("Cache-Control") || "";
+  const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
+  const ttlMs = maxAgeMatch ? Number(maxAgeMatch[1]) * 1000 : CERTS_CACHE_TTL_MS;
+
+  cache.set(url, { keys, expiresAt: now + Math.max(ttlMs, 30_000) });
+  return keys;
+}
+
+async function requireAccessJwt(request, env) {
+  const requireCfAccess = env.REQUIRE_CF_ACCESS === "1" || env.REQUIRE_CF_ACCESS === "true";
+  if (!requireCfAccess) return null;
+
+  const certUrl = env.CF_ACCESS_CERTS_URL
+    || (env.CF_ACCESS_TEAM_DOMAIN ? `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs` : null);
+
+  if ((!env.CF_ACCESS_JWT_PUBLIC_KEY && !certUrl) || !env.CF_ACCESS_AUD) {
+    return json(
+      { error: "Server misconfigured: configure CF_ACCESS_AUD and either CF_ACCESS_CERTS_URL/CF_ACCESS_TEAM_DOMAIN or CF_ACCESS_JWT_PUBLIC_KEY" },
+      503,
+      { request, env }
+    );
+  }
+
+  const token =
+    request.headers.get("CF-Access-Jwt-Assertion") ||
+    request.headers.get("cf-access-jwt-assertion") ||
+    "";
+
+  if (!token) {
+    return json({ error: "Missing Cloudflare Access token" }, 401, { request, env });
+  }
+
+  try {
+    const verification = await verifyAccessJwt(token, env);
+    if (!verification.valid) {
+      return json({ error: "Invalid Cloudflare Access token", reason: verification.reason }, 401, { request, env });
+    }
+  } catch (error) {
+    return json({ error: "Cloudflare Access token verification failed", reason: error.message }, 401, { request, env });
+  }
+  return null;
+}
+
 // ── API key guard ───────────────────────────────────────────────────────────
 function requireApiKey(request, env) {
   const allowUnauthenticated = env.ALLOW_UNAUTHENTICATED === "1" || env.ALLOW_UNAUTHENTICATED === "true";
@@ -128,14 +320,16 @@ export default {
 
     // ── CORS preflight ─────────────────────────────────────────────────────
     if (request.method === "OPTIONS") {
+      const headers = corsHeaders(request, env, "GET, POST, DELETE, OPTIONS");
+      if (!headers) {
+        return new Response(JSON.stringify({ error: "Origin not allowed" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       return new Response(null, {
         status: 204,
-        headers: {
-          "Access-Control-Allow-Origin":  "*",
-          "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization",
-          "Access-Control-Max-Age":       "86400",
-        },
+        headers,
       });
     }
 
@@ -148,7 +342,10 @@ export default {
       return handleControlTowerClaims(request, env);
     }
 
-    // ── Auth guard — all non-health routes require API key ─────────────
+    // ── Auth guard — all non-public routes require Cloudflare Access + API key ─────────────
+    const cfAccessErr = await requireAccessJwt(request, env);
+    if (cfAccessErr) return cfAccessErr;
+
     const authErr = requireApiKey(request, env);
     if (authErr) return authErr;
 
@@ -1974,12 +2171,16 @@ async function handleDebugNavigate(request, env) {
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
-function json(data, status = 200) {
+function json(data, status = 200, context = {}) {
+  const origin = context.request && context.env ? resolveCorsOrigin(context.request, context.env) : "https://portals.elfadil.com";
+  const headers = {
+    "Content-Type": "application/json",
+    Vary: "Origin",
+  };
+  if (origin) headers["Access-Control-Allow-Origin"] = origin;
+
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: {
-      "Content-Type":                "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
+    headers,
   });
 }
