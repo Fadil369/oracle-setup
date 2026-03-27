@@ -10,18 +10,23 @@
  *   FIX-5  Jizan: probe timeout set to 8s (it's slow, not dead)
  *   FIX-6  Added /api/health JSON endpoint for COMPLIANCELINC scanner
  *   FIX-7  Added /api/scan/:branch proxy for oracle-claim-scanner Worker
+ *   FIX-8  API key auth enforced on /api/control-tower and /api/scan/:branch
+ *   FIX-9  CORS preflight (OPTIONS) handler added
+ *   FIX-10 Error boundary on dashboard route (503 fallback on crash)
  *   NEW    Cron trigger: health check every 5 min → stored in KV
  *
  * Routes:
- *   GET  /                    → portal dashboard HTML
- *   GET  /api/control-tower   → combined snapshot for hospitals, external services, and action queue
- *   GET  /api/runbooks        → runbook index for the action queue
- *   GET  /api/runbooks/:id    → runbook JSON detail
- *   GET  /api/health          → JSON health of all branches
- *   GET  /api/health/:branch  → JSON health of one branch
- *   GET  /api/branches        → branch config (no passwords)
- *   GET  /runbooks/:id        → operator-facing runbook page
- *   GET  /health              → simple 200 OK liveness probe
+ *   GET      /                     → portal dashboard HTML
+ *   GET      /api/control-tower    → combined snapshot (requires X-API-Key)
+ *   GET      /api/runbooks         → runbook index for the action queue
+ *   GET      /api/runbooks/:id     → runbook JSON detail
+ *   GET/POST /api/scan/:branch     → proxy to oracle-claim-scanner Worker (requires X-API-Key)
+ *   GET      /api/health           → JSON health of all branches (public)
+ *   GET      /api/health/:branch   → JSON health of one branch (public)
+ *   GET      /api/branches         → branch config, no passwords (public)
+ *   GET      /runbooks/:id         → operator-facing runbook page
+ *   GET      /health               → simple 200 OK liveness probe
+ *   OPTIONS  /*                    → CORS preflight
  */
 
 // ── MOH external portals (simple HTTP probe, no login required) ──────────────
@@ -1200,12 +1205,35 @@ async function buildControlTowerSnapshot(env) {
   return createControlTowerSnapshot(branchHealth, externalHealth, claims);
 }
 
+// ── API key guard helper ──────────────────────────────────────────────────────
+function requireApiKey(request, env, url) {
+  if (!env.API_KEY) return null; // not configured — open
+  const provided = request.headers.get("X-API-Key") || url.searchParams.get("api_key");
+  if (provided !== env.API_KEY) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  return null;
+}
+
 // ── Main fetch handler ────────────────────────────────────────────────────────
 export default {
   // ── HTTP requests ─────────────────────────────────────────────────────────
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
 
     // Simple liveness
     if (path === "/health") {
@@ -1242,11 +1270,62 @@ export default {
     }
 
     if (path === "/api/control-tower") {
+      const denied = requireApiKey(request, env, url);
+      if (denied) return denied;
       const snapshot = await buildControlTowerSnapshot(env);
       return json(snapshot);
     }
 
-    // JSON health of all branches
+    // Proxy /api/scan/:branch → oracle-claim-scanner Worker (FIX-7)
+    if (path.startsWith("/api/scan/")) {
+      const denied = requireApiKey(request, env, url);
+      if (denied) return denied;
+      const branchId = path.split("/api/scan/")[1];
+      const branch = BRANCHES.find(b => b.id === branchId);
+      if (!branch) return json({ error: `Unknown branch: ${branchId}` }, 404);
+
+      const scanPath = `/scan?branch=${encodeURIComponent(branchId)}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+
+      try {
+        const response = env.SCANNER_SERVICE
+          ? await env.SCANNER_SERVICE.fetch(`https://scanner.internal${scanPath}`, {
+              method: request.method === "POST" ? "POST" : "GET",
+              headers: { Accept: "application/json" },
+            })
+          : await fetch(
+              normalizeUrl(env.SCANNER_URL || "https://oracle-scanner.elfadil.com", scanPath),
+              {
+                method: request.method === "POST" ? "POST" : "GET",
+                headers: { Accept: "application/json" },
+                signal: controller.signal,
+              }
+            );
+
+        const body = await response.text();
+        return new Response(body, {
+          status: response.status,
+          headers: {
+            "Content-Type": response.headers.get("Content-Type") || "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
+          },
+        });
+      } catch (error) {
+        return json(
+          {
+            error: error.name === "AbortError" ? "timeout" : error.message,
+            branch: branchId,
+          },
+          502
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // JSON health of all branches (public — used by COMPLIANCELINC scanner)
     if (path === "/api/health") {
       const health = await probeAllBranches();
       const online = Object.values(health).filter(h => h.online).length;
@@ -1258,7 +1337,7 @@ export default {
       });
     }
 
-    // JSON health of one branch
+    // JSON health of one branch (public)
     if (path.startsWith("/api/health/")) {
       const id = path.split("/api/health/")[1];
       const branch = BRANCHES.find(b => b.id === id);
@@ -1267,7 +1346,7 @@ export default {
       return json(result);
     }
 
-    // Branch config (for COMPLIANCELINC scanner)
+    // Branch config (public — used by COMPLIANCELINC scanner)
     if (path === "/api/branches") {
       return json(BRANCHES.map(b => ({
         id:       b.id,
@@ -1280,14 +1359,24 @@ export default {
       })));
     }
 
-    // Dashboard (default route)
-    const snapshot = await buildControlTowerSnapshot(env);
-    return new Response(renderDashboard(snapshot), {
-      headers: {
-        "Content-Type": "text/html;charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    });
+    // Dashboard (default route) — error boundary prevents Worker crash
+    try {
+      const snapshot = await buildControlTowerSnapshot(env);
+      return new Response(renderDashboard(snapshot), {
+        headers: {
+          "Content-Type": "text/html;charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch (err) {
+      console.error("Dashboard render failed:", err.message);
+      return new Response(
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unavailable</title></head>` +
+        `<body style="font-family:sans-serif;padding:2rem"><h1>Dashboard temporarily unavailable</h1>` +
+        `<p>${escapeHtmlBasic(err.message)}</p><a href="/">Retry</a></body></html>`,
+        { status: 503, headers: { "Content-Type": "text/html;charset=utf-8" } }
+      );
+    }
   },
 
   // ── Cron: probe every 5 min, store in KV ─────────────────────────────────
@@ -2762,4 +2851,12 @@ function json(data, status = 200) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function escapeHtmlBasic(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
