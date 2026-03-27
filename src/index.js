@@ -86,14 +86,29 @@ const WATCHLIST_LIMIT = 24;
 
 // ── API key guard ───────────────────────────────────────────────────────────
 function requireApiKey(request, env) {
-  // If no API_KEY secret is configured, skip auth (dev/unset)
+  const allowUnauthenticated = env.ALLOW_UNAUTHENTICATED === "1" || env.ALLOW_UNAUTHENTICATED === "true";
+  if (!env.API_KEY && !allowUnauthenticated) {
+    return new Response(JSON.stringify({ error: "Server misconfigured: API_KEY is required" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (!env.API_KEY) return null;
+
+  const url = new URL(request.url);
   const auth = request.headers.get("Authorization") ?? "";
-  const key  = auth.startsWith("Bearer ") ? auth.slice(7) : (new URL(request.url).searchParams.get("key") ?? "");
+  const bearerKey = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const headerKey = request.headers.get("X-API-Key") ?? "";
+  const queryKey = url.searchParams.get("key") ?? "";
+  const key = bearerKey || headerKey || queryKey;
+
   if (key !== env.API_KEY) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
-      headers: { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" },
+      headers: {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": "Bearer",
+      },
     });
   }
   return null;

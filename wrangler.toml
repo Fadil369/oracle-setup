@@ -56,3 +56,4 @@ enabled = true
 [vars]
 DEFAULT_HOSPITAL = "riyadh"
 PORTALS_URL      = "https://portals.elfadil.com"
+ALLOW_UNAUTHENTICATED = "0"

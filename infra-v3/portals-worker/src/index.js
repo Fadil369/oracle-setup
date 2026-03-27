@@ -17,7 +17,9 @@
  *
  * Routes:
  *   GET      /                     → portal dashboard HTML
- *   GET      /api/control-tower    → combined snapshot (requires X-API-Key)
+ *   GET      /api/control-tower/summary → redacted lightweight snapshot (public)
+ *   GET      /api/control-tower/details → redacted detailed snapshot (public)
+ *   GET      /api/control-tower    → combined snapshot with internals (requires API key)
  *   GET      /api/runbooks         → runbook index for the action queue
  *   GET      /api/runbooks/:id     → runbook JSON detail
  *   GET/POST /api/scan/:branch     → proxy to oracle-claim-scanner Worker (requires X-API-Key)
@@ -659,6 +661,22 @@ function enrichHospital(branch, probe) {
   };
 }
 
+function redactHospitalInternals(hospital) {
+  const safe = { ...hospital };
+  delete safe.backend;
+  delete safe.backendHost;
+  return safe;
+}
+
+function redactActionInternals(action) {
+  const scrubbedRecommendation = String(action.recommendation || "")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[internal-origin]");
+  return {
+    ...action,
+    recommendation: scrubbedRecommendation,
+  };
+}
+
 function enrichExternalService(portal, probe) {
   const evaluation = evaluateProbe(probe, EXTERNAL_WATCH_THRESHOLD_MS, {
     stableLabel: "Reachable",
@@ -994,7 +1012,7 @@ function buildPriorityActions(hospitals, externalServices, claims) {
         scope: "Hospital",
         title: `Restore ${hospital.nameEn} connectivity`,
         description: `${hospital.nameEn} is ${hospital.healthLabel.toLowerCase()} at ${hospital.subdomain}. Operators cannot reach the Oracle portal.`,
-        recommendation: `Check the Cloudflare tunnel, branch network path, and Oracle endpoint at ${hospital.backendHost}.`,
+        recommendation: "Check Cloudflare tunnel health, branch network path, and the mapped Oracle origin endpoint.",
         href: hospital.url,
         hrefLabel: "Open branch portal",
         tone: hospital.tone,
@@ -1161,7 +1179,9 @@ function summarizeActions(actions) {
   };
 }
 
-function createControlTowerSnapshot(branchHealth, externalHealth, claims) {
+function createControlTowerSnapshot(branchHealth, externalHealth, claims, options = {}) {
+  const includeInternals = options.includeInternals === true;
+  const includeDetails = options.includeDetails !== false;
   const hospitals = BRANCHES.map(branch => enrichHospital(branch, branchHealth[branch.id]));
   const externalServices = MOH_PORTALS.map(portal => enrichExternalService(portal, externalHealth[portal.id]));
   const priorityActions = buildPriorityActions(hospitals, externalServices, claims);
@@ -1169,7 +1189,7 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims) {
   const externalSummary = summarizeServices(externalServices);
   const allResponsive = [...hospitals, ...externalServices].filter(item => item.online);
 
-  return {
+  const snapshot = {
     timestamp: new Date().toISOString(),
     meta: {
       refreshIntervalMs: AUTO_REFRESH_INTERVAL_MS,
@@ -1192,9 +1212,55 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims) {
     runbooks: buildRunbookIndex(),
     priorityActions,
   };
+
+  if (!includeInternals) {
+    snapshot.hospitals = snapshot.hospitals.map(redactHospitalInternals);
+    snapshot.priorityActions = snapshot.priorityActions.map(redactActionInternals);
+  }
+
+  if (!includeDetails) {
+    return {
+      timestamp: snapshot.timestamp,
+      meta: snapshot.meta,
+      summary: snapshot.summary,
+      hospitals: snapshot.hospitals.map((hospital) => ({
+        id: hospital.id,
+        kind: hospital.kind,
+        name: hospital.name,
+        nameEn: hospital.nameEn,
+        region: hospital.region,
+        subdomain: hospital.subdomain,
+        loginPath: hospital.loginPath,
+        url: hospital.url,
+        online: hospital.online,
+        statusCode: hospital.statusCode,
+        latency: hospital.latency,
+        error: hospital.error,
+        probedAt: hospital.probedAt,
+        tone: hospital.tone,
+        healthLabel: hospital.healthLabel,
+        signal: hospital.signal,
+      })),
+      externalServices: snapshot.externalServices,
+      priorityActions: snapshot.priorityActions.map((action) => ({
+        id: action.id,
+        severity: action.severity,
+        owner: action.owner,
+        target: action.target,
+        scope: action.scope,
+        title: action.title,
+        description: action.description,
+        tone: action.tone,
+        rank: action.rank,
+        latency: action.latency,
+      })),
+    };
+  }
+
+  return snapshot;
 }
 
-async function buildControlTowerSnapshot(env) {
+async function buildControlTowerSnapshot(env, options = {}) {
   const [branchHealth, externalHealth, scannerFeed] = await Promise.all([
     probeAllBranches(),
     probeAllExternalPortals(),
@@ -1202,13 +1268,26 @@ async function buildControlTowerSnapshot(env) {
   ]);
 
   const claims = buildClaimsSnapshot(scannerFeed, externalHealth);
-  return createControlTowerSnapshot(branchHealth, externalHealth, claims);
+  return createControlTowerSnapshot(branchHealth, externalHealth, claims, options);
 }
 
 // ── API key guard helper ──────────────────────────────────────────────────────
 function requireApiKey(request, env, url) {
-  if (!env.API_KEY) return null; // not configured — open
-  const provided = request.headers.get("X-API-Key") || url.searchParams.get("api_key");
+  const allowUnauthenticated = env.ALLOW_UNAUTHENTICATED === "1" || env.ALLOW_UNAUTHENTICATED === "true";
+  if (!env.API_KEY && !allowUnauthenticated) {
+    return json({ error: "Server misconfigured: API_KEY is required" }, 503);
+  }
+  if (!env.API_KEY) return null;
+
+  const auth = request.headers.get("Authorization") || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const provided =
+    bearer ||
+    request.headers.get("X-API-Key") ||
+    request.headers.get("x-api-key") ||
+    url.searchParams.get("api_key") ||
+    url.searchParams.get("key");
+
   if (provided !== env.API_KEY) {
     return json({ error: "Unauthorized" }, 401);
   }
@@ -1269,10 +1348,39 @@ export default {
       });
     }
 
+    if (path === "/api/control-tower/summary") {
+      const summarySnapshot = await buildControlTowerSnapshot(env, {
+        includeInternals: false,
+        includeDetails: false,
+      });
+      return json(summarySnapshot);
+    }
+
+    if (path === "/api/control-tower/details") {
+      const detailSnapshot = await buildControlTowerSnapshot(env, {
+        includeInternals: false,
+        includeDetails: true,
+      });
+      return json({
+        timestamp: detailSnapshot.timestamp,
+        meta: detailSnapshot.meta,
+        summary: {
+          claims: detailSnapshot.summary.claims,
+          actions: detailSnapshot.summary.actions,
+        },
+        claims: detailSnapshot.claims,
+        runbooks: detailSnapshot.runbooks,
+        priorityActions: detailSnapshot.priorityActions,
+      });
+    }
+
     if (path === "/api/control-tower") {
       const denied = requireApiKey(request, env, url);
       if (denied) return denied;
-      const snapshot = await buildControlTowerSnapshot(env);
+      const snapshot = await buildControlTowerSnapshot(env, {
+        includeInternals: true,
+        includeDetails: true,
+      });
       return json(snapshot);
     }
 
@@ -1361,7 +1469,10 @@ export default {
 
     // Dashboard (default route) — error boundary prevents Worker crash
     try {
-      const snapshot = await buildControlTowerSnapshot(env);
+      const snapshot = await buildControlTowerSnapshot(env, {
+        includeInternals: false,
+        includeDetails: true,
+      });
       return new Response(renderDashboard(snapshot), {
         headers: {
           "Content-Type": "text/html;charset=utf-8",
@@ -1388,7 +1499,18 @@ export default {
         probeAllExternalPortals(),
       ]);
       const claims = buildClaimsSnapshot(await fetchScannerClaimsFeed(env), externalHealth);
-      const snapshot = createControlTowerSnapshot(branchHealth, externalHealth, claims);
+      const snapshot = createControlTowerSnapshot(branchHealth, externalHealth, claims, {
+        includeInternals: true,
+        includeDetails: true,
+      });
+      const summarySnapshot = createControlTowerSnapshot(branchHealth, externalHealth, claims, {
+        includeInternals: false,
+        includeDetails: false,
+      });
+      const detailSnapshot = createControlTowerSnapshot(branchHealth, externalHealth, claims, {
+        includeInternals: false,
+        includeDetails: true,
+      });
       await env.PORTAL_KV.put(
         "health:latest",
         JSON.stringify({ timestamp: snapshot.timestamp, branches: branchHealth }),
@@ -1397,6 +1519,26 @@ export default {
       await env.PORTAL_KV.put(
         "control-tower:latest",
         JSON.stringify(snapshot),
+        { expirationTtl: 600 }
+      );
+      await env.PORTAL_KV.put(
+        "control-tower:summary:latest",
+        JSON.stringify(summarySnapshot),
+        { expirationTtl: 600 }
+      );
+      await env.PORTAL_KV.put(
+        "control-tower:details:latest",
+        JSON.stringify({
+          timestamp: detailSnapshot.timestamp,
+          meta: detailSnapshot.meta,
+          summary: {
+            claims: detailSnapshot.summary.claims,
+            actions: detailSnapshot.summary.actions,
+          },
+          claims: detailSnapshot.claims,
+          runbooks: detailSnapshot.runbooks,
+          priorityActions: detailSnapshot.priorityActions,
+        }),
         { expirationTtl: 600 }
       );
     } catch (err) {
@@ -2224,7 +2366,7 @@ function renderDashboard(snapshot) {
           </p>
           <div class="hero-actions">
             <a href="#network" class="primary-action">View live hospital network</a>
-            <a href="/api/control-tower" target="_blank" rel="noopener noreferrer" class="secondary-action">Open control-tower API</a>
+            <a href="/api/control-tower/summary" target="_blank" rel="noopener noreferrer" class="secondary-action">Open summary API</a>
             <button type="button" id="refreshNow" class="secondary-action">Refresh live data</button>
           </div>
           <div class="hero-notes">
@@ -2303,7 +2445,7 @@ function renderDashboard(snapshot) {
       <div class="toolbar">
         <label class="search-box">
           <span>Search hospitals</span>
-          <input id="hospitalSearch" type="search" placeholder="Search by hospital, region, Arabic name, or backend">
+          <input id="hospitalSearch" type="search" placeholder="Search by hospital, region, Arabic name, or subdomain">
         </label>
         <div class="filter-group" id="statusFilters">
           <button type="button" class="filter-pill active" data-filter="all">All</button>
@@ -2491,7 +2633,7 @@ function renderDashboard(snapshot) {
 
     <div class="footer-bar fade-up delay-4">
       <span>Live probe time: ${renderedAt.toUTCString()}</span>
-      <span><a href="/api/branches" target="_blank" rel="noopener noreferrer">Branch config API</a> · <a href="/api/health" target="_blank" rel="noopener noreferrer">Health JSON</a> · <a href="/api/control-tower" target="_blank" rel="noopener noreferrer">Control Tower JSON</a></span>
+      <span><a href="/api/branches" target="_blank" rel="noopener noreferrer">Branch config API</a> · <a href="/api/health" target="_blank" rel="noopener noreferrer">Health JSON</a> · <a href="/api/control-tower/summary" target="_blank" rel="noopener noreferrer">Summary JSON</a> · <a href="/api/control-tower/details" target="_blank" rel="noopener noreferrer">Details JSON</a></span>
       <span>BrainSAIT COMPLIANCELINC · portals.elfadil.com · ${renderedAt.toISOString().slice(0, 10)}</span>
     </div>
   </main>
@@ -2507,6 +2649,7 @@ function renderDashboard(snapshot) {
         refreshing: false,
         error: "",
         nextRefreshAt: Date.now() + ((initialSnapshot.meta && initialSnapshot.meta.refreshIntervalMs) || ${AUTO_REFRESH_INTERVAL_MS}),
+        detailRefreshCounter: 0,
       };
 
       const refs = {};
@@ -2608,7 +2751,6 @@ function renderDashboard(snapshot) {
             '<div class="hospital-tags">',
               '<span>', escapeHtml(item.subdomain), '</span>',
               '<span>', escapeHtml(item.loginPath), '</span>',
-              '<span>', escapeHtml(item.backendHost), '</span>',
             '</div>',
             item.online
               ? '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener noreferrer" class="primary-link">Open Oracle Portal</a>'
@@ -2709,7 +2851,7 @@ function renderDashboard(snapshot) {
           if (!matchesFilter) return false;
           if (!search) return true;
 
-          const haystack = [item.nameEn, item.name, item.region, item.subdomain, item.backendHost]
+          const haystack = [item.nameEn, item.name, item.region, item.subdomain]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
@@ -2793,22 +2935,68 @@ function renderDashboard(snapshot) {
         refs.refreshError.hidden = !state.error;
       }
 
+      async function refreshSummary() {
+        const response = await fetch("/api/control-tower/summary?ts=" + Date.now(), {
+          cache: "no-store",
+          headers: { "Accept": "application/json" },
+        });
+
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+
+        const summarySnapshot = await response.json();
+        state.snapshot = {
+          ...state.snapshot,
+          ...summarySnapshot,
+          hospitals: summarySnapshot.hospitals,
+          externalServices: summarySnapshot.externalServices,
+          priorityActions: summarySnapshot.priorityActions,
+          summary: {
+            ...state.snapshot.summary,
+            ...summarySnapshot.summary,
+          },
+        };
+      }
+
+      async function refreshDetails() {
+        const response = await fetch("/api/control-tower/details?ts=" + Date.now(), {
+          cache: "no-store",
+          headers: { "Accept": "application/json" },
+        });
+
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+
+        const detailSnapshot = await response.json();
+        state.snapshot = {
+          ...state.snapshot,
+          timestamp: detailSnapshot.timestamp || state.snapshot.timestamp,
+          meta: detailSnapshot.meta || state.snapshot.meta,
+          claims: detailSnapshot.claims || state.snapshot.claims,
+          runbooks: detailSnapshot.runbooks || state.snapshot.runbooks,
+          priorityActions: detailSnapshot.priorityActions || state.snapshot.priorityActions,
+          summary: {
+            ...state.snapshot.summary,
+            ...(detailSnapshot.summary || {}),
+            actions: detailSnapshot.summary?.actions || state.snapshot.summary?.actions,
+            claims: detailSnapshot.summary?.claims || state.snapshot.summary?.claims,
+          },
+        };
+      }
+
       async function refreshSnapshot(manual) {
         if (state.refreshing) return;
         state.refreshing = true;
         updateRefreshStrip();
 
         try {
-          const response = await fetch("/api/control-tower?ts=" + Date.now(), {
-            cache: "no-store",
-            headers: { "Accept": "application/json" },
-          });
-
-          if (!response.ok) {
-            throw new Error("HTTP " + response.status);
+          await refreshSummary();
+          state.detailRefreshCounter += 1;
+          if (manual || state.detailRefreshCounter % 3 === 0) {
+            await refreshDetails();
           }
-
-          state.snapshot = await response.json();
           state.error = "";
           state.nextRefreshAt = Date.now() + (((state.snapshot.meta && state.snapshot.meta.refreshIntervalMs) || refreshIntervalMs));
           render();

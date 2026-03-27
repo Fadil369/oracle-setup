@@ -15,7 +15,12 @@ import { readFileSync, writeFileSync } from "fs";
 import { validateSBSCodes, enrichWithFHIR } from "./fhir-integration/index.mjs";
 
 const WORKER_URL = process.env.WORKER_URL || "https://oracle-scanner.elfadil.com";
-const API_KEY    = process.env.API_KEY    || "pod6deEL-clQn6VER-I364aVUk2cyIYGGai63qpD";
+const API_KEY    = process.env.API_KEY;
+
+if (!API_KEY) {
+  console.error("ERROR: API_KEY is required. Export API_KEY before running trigger-batch.");
+  process.exit(1);
+}
 
 const AUTH_HEADERS = {
   "Content-Type":  "application/json",

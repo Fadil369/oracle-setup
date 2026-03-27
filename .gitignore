@@ -15,6 +15,13 @@ dist/
 .dev.vars
 .env
 .env.*
+.envrc
+.secrets.baseline
+*.pem
+*.key
+*.p12
+*.crt
+security-reports/
 artifacts/
 scan_results_*.json
 scan_results_*.csv

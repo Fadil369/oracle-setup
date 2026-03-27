@@ -1,0 +1,43 @@
+{
+  "description": "Template rules for scanner/control-tower API hardening",
+  "rules": [
+    {
+      "name": "scanner-public-health",
+      "expression": "(http.host eq \"oracle-scanner.elfadil.com\" and starts_with(http.request.uri.path, \"/health\"))",
+      "period": 60,
+      "requests_per_period": 120,
+      "action": "log"
+    },
+    {
+      "name": "scanner-protected-endpoints",
+      "expression": "(http.host eq \"oracle-scanner.elfadil.com\" and (starts_with(http.request.uri.path, \"/scan\") or starts_with(http.request.uri.path, \"/scan-batch\") or starts_with(http.request.uri.path, \"/sessions\")))",
+      "period": 60,
+      "requests_per_period": 30,
+      "mitigation_timeout": 600,
+      "action": "managed_challenge"
+    },
+    {
+      "name": "portals-control-tower-summary",
+      "expression": "(http.host eq \"portals.elfadil.com\" and starts_with(http.request.uri.path, \"/api/control-tower/summary\"))",
+      "period": 60,
+      "requests_per_period": 180,
+      "action": "log"
+    },
+    {
+      "name": "portals-control-tower-details",
+      "expression": "(http.host eq \"portals.elfadil.com\" and starts_with(http.request.uri.path, \"/api/control-tower/details\"))",
+      "period": 60,
+      "requests_per_period": 60,
+      "mitigation_timeout": 300,
+      "action": "managed_challenge"
+    },
+    {
+      "name": "portals-control-tower-legacy-auth",
+      "expression": "(http.host eq \"portals.elfadil.com\" and starts_with(http.request.uri.path, \"/api/control-tower\") and not starts_with(http.request.uri.path, \"/api/control-tower/summary\") and not starts_with(http.request.uri.path, \"/api/control-tower/details\"))",
+      "period": 60,
+      "requests_per_period": 20,
+      "mitigation_timeout": 900,
+      "action": "block"
+    }
+  ]
+}

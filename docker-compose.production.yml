@@ -1,0 +1,156 @@
+name: brainsait-platform
+
+services:
+  gateway:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge
+      - platform
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  portals-api:
+    image: ghcr.io/fadil369/brainsait-portals:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    networks:
+      - platform
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  scanner-api:
+    image: ghcr.io/fadil369/oracle-claim-scanner:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 2G
+        reservations:
+          cpus: "0.50"
+          memory: 512M
+    networks:
+      - platform
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.124.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infra/observability/otelcol.conf:/etc/otelcol-contrib/config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+      - "8889"
+    restart: unless-stopped
+    networks:
+      - observability
+      - platform
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    expose:
+      - "9090"
+    restart: unless-stopped
+    networks:
+      - observability
+
+  loki:
+    image: grafana/loki:3.4.3
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./infra/observability/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    expose:
+      - "3100"
+    restart: unless-stopped
+    networks:
+      - observability
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    env_file:
+      - .env.production
+    expose:
+      - "3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    networks:
+      - observability
+      - edge
+
+networks:
+  edge:
+    driver: bridge
+  platform:
+    driver: bridge
+    internal: true
+  observability:
+    driver: bridge
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  loki_data:
+  grafana_data:

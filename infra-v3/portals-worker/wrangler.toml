@@ -27,6 +27,7 @@ enabled = true
 #   wrangler secret put API_KEY    ← protects /api/control-tower and /api/scan/:branch
 [vars]
 SCANNER_URL = "https://oracle-scanner.elfadil.com"
+ALLOW_UNAUTHENTICATED = "0"
 
 [[services]]
 binding = "SCANNER_SERVICE"

@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "setup": "node setup.mjs"
+    "setup": "node setup.mjs",
+    "lint": "eslint . --ext .js,.mjs",
+    "test": "node tests/complete-interface-test.mjs",
+    "audit:deps": "npm audit --omit=dev"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.0.6"
   },
   "devDependencies": {
+    "eslint": "^9.39.4",
     "wrangler": "^4.77.0"
   }
 }
