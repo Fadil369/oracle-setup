@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/cloudflare-portals-deploy.yml'
       - 'infra-v3/portals-worker/**'
       - 'wrangler.toml'
       - 'package.json'
