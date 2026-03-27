@@ -10,7 +10,9 @@ param(
 )
 
 $TaskName = "CloudflaredTunnel"
-$ApiKey   = "pod6deEL-clQn6VER-I364aVUk2cyIYGGai63qpD"
+# API key must be stored in the CLOUDFLARED_API_KEY environment variable — never hardcode it here.
+$ApiKey   = $env:CLOUDFLARED_API_KEY
+if (-not $ApiKey) { throw "CLOUDFLARED_API_KEY environment variable is not set." }
 $LogFile  = "$env:USERPROFILE\.cloudflared\cloudflared.log"
 
 switch ($Action) {

@@ -1,0 +1,16 @@
+title = "oracle-setup gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test matrix placeholder tokens and documentation examples"
+regexTarget = "line"
+# Allow placeholder tokens like <YOUR_API_KEY> or <PORTAL_KV_NAMESPACE_ID>
+regex = ["<[A-Z_]+>"]
+
+[[allowlists]]
+description = "Allow curl commands with placeholder bearer tokens in docs"
+paths = ["PRODUCTION_AUDIT_TEST_MATRIX.md", "PRODUCTION_AUDIT_REPORT.md", "AUDIT_REPORT.md", "docs/**"]
+regexTarget = "line"
+regex = ["Authorization: Bearer invalid-key"]

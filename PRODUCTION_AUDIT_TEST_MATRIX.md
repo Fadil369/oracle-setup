@@ -340,7 +340,7 @@ curl -i https://portals.elfadil.com/api/health | grep "HTTP"
 curl -i https://portals.elfadil.com/api/runbooks | grep "HTTP"
 
 # SEC-05 (invalid API key test - currently no validation)
-curl -i -H "Authorization: Bearer invalid-key-123" https://portals.elfadil.com/api/health
+curl -i -H "Authorization: Bearer <YOUR_API_KEY>" https://portals.elfadil.com/api/health
 ```
 
 ### 3.2 CORS Testing
@@ -576,13 +576,13 @@ curl https://portals.elfadil.com/api/control-tower | jq '.claims.scanner.liveSys
 **Test Commands:**
 ```bash
 # INT-06 to INT-08 (requires wrangler CLI access)
-wrangler kv:key list --namespace-id=079016c359c348e180724cdd76f29129
+wrangler kv:key list --namespace-id=<PORTAL_KV_NAMESPACE_ID>
 
-wrangler kv:key get "health:latest" --namespace-id=079016c359c348e180724cdd76f29129 | jq '.timestamp'
+wrangler kv:key get "health:latest" --namespace-id=<PORTAL_KV_NAMESPACE_ID> | jq '.timestamp'
 
 # Wait 5 minutes and check again
 sleep 300
-wrangler kv:key get "health:latest" --namespace-id=079016c359c348e180724cdd76f29129 | jq '.timestamp'
+wrangler kv:key get "health:latest" --namespace-id=<PORTAL_KV_NAMESPACE_ID> | jq '.timestamp'
 # Timestamp should be updated
 ```
 
