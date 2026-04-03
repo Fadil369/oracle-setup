@@ -6,7 +6,7 @@ compatibility_date = "2024-12-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "basma_production"
-database_id = "071f4640-3b47-4148-8df0-7d727447d25e"
+database_id = "c30dd8f8-62f6-42f6-ad47-d442bf3bde7d"
 
 # R2 Bucket
 [[r2_buckets]]

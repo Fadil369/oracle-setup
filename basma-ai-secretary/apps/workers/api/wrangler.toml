@@ -6,7 +6,7 @@ compatibility_date = "2024-12-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "basma_production"
-database_id = "071f4640-3b47-4148-8df0-7d727447d25e"
+database_id = "c30dd8f8-62f6-42f6-ad47-d442bf3bde7d"
 
 # R2 Bucket
 [[r2_buckets]]
@@ -16,15 +16,15 @@ bucket_name = "basma-storage"
 # KV Namespaces
 [[kv_namespaces]]
 binding = "CACHE"
-id = "2d062e24d6734c898c69228574751079"
+id = "ca965fea12a14a8eb3a55bbe8b3f773e"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "2d062e24d6734c898c69228574751079"
+id = "6bd969dbe90a48aa90ba0a00e55f3763"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "2d062e24d6734c898c69228574751079"
+id = "1f1cee0c7fef4af7be191f487c2f3d76"
 
 # Durable Objects
 [[durable_objects.bindings]]
