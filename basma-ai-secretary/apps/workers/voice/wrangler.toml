@@ -33,3 +33,10 @@ WIDGET_ALLOWED_ORIGINS = "elfadil.com,www.elfadil.com,thefadil.site,www.thefadil
 # N8N_WEBHOOK_URL
 # N8N_WEBHOOK_TOKEN
 # WIDGET_SOCKET_SECRET
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "BASMA_MEMORY_VECTOR"
+index_name = "basma-memory-index"

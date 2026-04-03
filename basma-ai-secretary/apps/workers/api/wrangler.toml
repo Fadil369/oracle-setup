@@ -64,3 +64,10 @@ WIDGET_TOKEN_TTL_SECONDS = "180"
 # N8N_WEBHOOK_URL
 # N8N_WEBHOOK_TOKEN
 # ENCRYPTION_KEY
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "BASMA_MEMORY_VECTOR"
+index_name = "basma-memory-index"

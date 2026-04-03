@@ -1,176 +1,328 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { 
-  Users, Calendar, BarChart3, MessageSquare, 
-  Search, Filter, Plus, MoreHorizontal, 
-  TrendingUp, TrendingDown, Clock, CheckCircle 
+import {
+  Activity,
+  Gauge,
+  Languages,
+  MessageSquare,
+  Radio,
+  RefreshCw,
+  ShieldCheck,
+  Timer,
+  Wifi,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type ServiceStatus = "operational" | "degraded" | "offline" | "incident";
+
+interface PlatformService {
+  id: string;
+  name: string;
+  status: ServiceStatus;
+  latencyMs: number;
+  httpCode: number;
+  endpoint: string;
+}
+
+interface PlatformStatusResponse {
+  status: ServiceStatus;
+  timestamp: number;
+  summary: {
+    averageLatencyMs: number;
+    websocketReady: boolean;
+    widgetReady: boolean;
+  };
+  services: PlatformService[];
+  links: {
+    dashboard: string;
+    widget: string;
+    voice: string;
+  };
+}
+
+const COPY = {
+  en: {
+    title: "Platform Status",
+    subtitle: "Realtime operational visibility for Basma AI across web, voice, and widget channels.",
+    languageSwitch: "العربية",
+    overview: "Control Tower",
+    cards: {
+      status: "Overall Health",
+      latency: "Average Latency",
+      websocket: "Voice WebSocket",
+      widget: "Widget Readiness",
+    },
+    labels: {
+      operational: "Operational",
+      degraded: "Degraded",
+      incident: "Incident",
+      offline: "Offline",
+      connected: "Connected",
+      disconnected: "Disconnected",
+      active: "Active",
+      inactive: "Inactive",
+      endpoint: "Endpoint",
+      service: "Service",
+      state: "State",
+      latency: "Latency",
+      code: "Code",
+      refreshed: "Last refreshed",
+      refresh: "Refresh",
+    },
+  },
+  ar: {
+    title: "حالة المنصة",
+    subtitle: "مراقبة تشغيلية لحظية لبسمة عبر الويب والصوت والودجت.",
+    languageSwitch: "English",
+    overview: "برج التحكم",
+    cards: {
+      status: "الصحة العامة",
+      latency: "متوسط الاستجابة",
+      websocket: "اتصال الصوت اللحظي",
+      widget: "جاهزية الودجت",
+    },
+    labels: {
+      operational: "تشغيل طبيعي",
+      degraded: "أداء متراجع",
+      incident: "حادث تشغيلي",
+      offline: "متوقف",
+      connected: "متصل",
+      disconnected: "غير متصل",
+      active: "نشط",
+      inactive: "غير نشط",
+      endpoint: "الرابط",
+      service: "الخدمة",
+      state: "الحالة",
+      latency: "الاستجابة",
+      code: "الرمز",
+      refreshed: "آخر تحديث",
+      refresh: "تحديث",
+    },
+  },
+} as const;
+
+const FALLBACK_STATUS: PlatformStatusResponse = {
+  status: "degraded",
+  timestamp: Date.now(),
+  summary: {
+    averageLatencyMs: 0,
+    websocketReady: false,
+    widgetReady: false,
+  },
+  services: [],
+  links: {
+    dashboard: "https://bsma.brainsait.org",
+    widget: "https://basma.brainsait.org/widget.js",
+    voice: "https://basma-voice.brainsait.org",
+  },
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_BASMA_API_URL || "https://basma-api.brainsait.org";
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState("all");
+  const [locale, setLocale] = useState<"en" | "ar">("en");
+  const [statusData, setStatusData] = useState<PlatformStatusResponse>(FALLBACK_STATUS);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const stats = [
-    { label: "Total Visitors", value: "2,543", change: "+12.5%", trending: "up" },
-    { label: "Qualified Leads", value: "482", change: "+5.2%", trending: "up" },
-    { label: "Appointments", value: "124", change: "-2.1%", trending: "down" },
-    { label: "Conversion Rate", value: "18.9%", change: "+3.4%", trending: "up" },
-  ];
+  const copy = COPY[locale];
+  const directionClass = locale === "ar" ? "rtl" : "ltr";
 
-  const recentVisitors = [
-    { id: 1, name: "Dr. Ahmed Khalid", company: "King Saud Hospital", status: "Lead", score: 85, lastContact: "2 hours ago" },
-    { id: 2, name: "Sarah Williams", company: "Aramco Health", status: "Customer", score: 92, lastContact: "5 hours ago" },
-    { id: 3, name: "Mohammed Al-Zahrani", company: "Dallah Pharma", status: "Visitor", score: 42, lastContact: "Yesterday" },
-    { id: 4, name: "Elena Petrova", company: "Global Medical", status: "Lead", score: 71, lastContact: "Yesterday" },
+  const statusLabel = useMemo(() => {
+    const value = statusData.status;
+    return copy.labels[value] || value;
+  }, [copy.labels, statusData.status]);
+
+  async function fetchPlatformStatus() {
+    try {
+      const response = await fetch(`${API_BASE}/public/platform-status`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Status request failed: ${response.status}`);
+      }
+
+      const payload = (await response.json()) as PlatformStatusResponse;
+      setStatusData(payload);
+    } catch {
+      setStatusData((previous) => ({
+        ...previous,
+        status: "degraded",
+        timestamp: Date.now(),
+      }));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchPlatformStatus();
+    const timer = setInterval(fetchPlatformStatus, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const healthCards = [
+    {
+      key: "status",
+      label: copy.cards.status,
+      value: statusLabel,
+      icon: ShieldCheck,
+    },
+    {
+      key: "latency",
+      label: copy.cards.latency,
+      value: `${statusData.summary.averageLatencyMs || "--"}ms`,
+      icon: Timer,
+    },
+    {
+      key: "websocket",
+      label: copy.cards.websocket,
+      value: statusData.summary.websocketReady ? copy.labels.connected : copy.labels.disconnected,
+      icon: Wifi,
+    },
+    {
+      key: "widget",
+      label: copy.cards.widget,
+      value: statusData.summary.widgetReady ? copy.labels.active : copy.labels.inactive,
+      icon: Radio,
+    },
   ];
 
   return (
-    <div className="p-8 space-y-8 ltr">
-      {/* Header */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Executive Dashboard</h1>
-          <p className="text-gray-400 mt-1">Manage Basma's performance and visitor interactions.</p>
-        </div>
-        <button className="px-6 py-3 bg-brain-sky text-white rounded-xl font-bold flex items-center gap-2 hover:scale-105 transition-all">
-          <Plus size={20} />
-          Manual Entry
-        </button>
-      </div>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {stats.map((stat, i) => (
-          <motion.div 
-            key={stat.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className="glass p-6 rounded-2xl relative overflow-hidden"
-          >
-            <div className="absolute top-0 right-0 w-24 h-24 bg-brain-sky/10 blur-3xl -mr-8 -mt-8" />
-            <p className="text-sm font-medium text-gray-400">{stat.label}</p>
-            <div className="flex items-end justify-between mt-2">
-              <h3 className="text-3xl font-bold">{stat.value}</h3>
-              <div className={`flex items-center gap-1 text-xs font-bold ${stat.trending === 'up' ? 'text-green-400' : 'text-red-400'}`}>
-                {stat.trending === 'up' ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                {stat.change}
-              </div>
+    <main className={`min-h-screen px-5 py-8 md:px-10 md:py-10 ${directionClass}`}>
+      <div className="mx-auto max-w-7xl space-y-8">
+        <motion.section
+          initial={{ opacity: 0, y: 22 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass rounded-3xl p-6 md:p-8"
+        >
+          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="space-y-2">
+              <p className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                <Activity size={13} />
+                {copy.overview}
+              </p>
+              <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">{copy.title}</h1>
+              <p className="max-w-3xl text-sm text-slate-200/80 md:text-base">{copy.subtitle}</p>
             </div>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Main Content Area */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Visitors Table */}
-        <div className="lg:col-span-2 glass rounded-3xl overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-white/10 flex justify-between items-center">
-            <div className="flex gap-4">
-              <button className="text-brain-sky font-bold border-b-2 border-brain-sky pb-1">All Visitors</button>
-              <button className="text-gray-400 hover:text-white transition">Qualified Leads</button>
-              <button className="text-gray-400 hover:text-white transition">Customers</button>
-            </div>
-            <div className="flex gap-2">
-              <div className="relative">
-                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="text" placeholder="Search..." className="pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brain-sky/50 w-64" />
-              </div>
-              <button className="p-2 glass rounded-lg hover:bg-white/10 transition"><Filter size={18} /></button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setLocale((value) => (value === "en" ? "ar" : "en"))}
+                className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-white/10"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Languages size={16} />
+                  {copy.languageSwitch}
+                </span>
+              </button>
+              <button
+                onClick={fetchPlatformStatus}
+                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                  {copy.labels.refresh}
+                </span>
+              </button>
             </div>
           </div>
-          <div className="flex-1 overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-white/5 text-gray-400 text-xs uppercase tracking-wider">
-                <tr>
-                  <th className="px-6 py-4 font-semibold">Visitor / Company</th>
-                  <th className="px-6 py-4 font-semibold">Status</th>
-                  <th className="px-6 py-4 font-semibold">Lead Score</th>
-                  <th className="px-6 py-4 font-semibold">Last Contact</th>
-                  <th className="px-6 py-4 font-semibold"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {recentVisitors.map((visitor) => (
-                  <tr key={visitor.id} className="hover:bg-white/5 transition-colors group">
-                    <td className="px-6 py-4">
-                      <div className="font-bold">{visitor.name}</div>
-                      <div className="text-xs text-gray-400">{visitor.company}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${
-                        visitor.status === 'Customer' ? 'bg-green-500/10 text-green-400' :
-                        visitor.status === 'Lead' ? 'bg-brain-sky/10 text-brain-sky' :
-                        'bg-white/10 text-gray-400'
-                      }`}>
-                        {visitor.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-2 bg-white/10 rounded-full overflow-hidden">
-                          <div className="h-full bg-brain-orange" style={{ width: `${visitor.score}%` }} />
-                        </div>
-                        <span className="text-xs font-bold">{visitor.score}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-xs text-gray-400">{visitor.lastContact}</td>
-                    <td className="px-6 py-4 text-right">
-                      <button className="p-2 hover:bg-white/10 rounded-lg transition opacity-0 group-hover:opacity-100">
-                        <MoreHorizontal size={18} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="p-4 border-t border-white/10 text-center">
-            <button className="text-sm text-brain-sky font-bold hover:underline">View All Visitors</button>
-          </div>
-        </div>
+        </motion.section>
 
-        {/* Sidebar Widgets (Recent Activity / Tasks) */}
-        <div className="space-y-8">
-          <div className="glass p-6 rounded-3xl">
-            <h4 className="font-bold mb-4 flex items-center gap-2">
-              <Clock size={18} className="text-brain-orange" />
-              Recent AI Interactions
-            </h4>
-            <div className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="flex gap-3 items-start border-l-2 border-brain-orange/50 pl-4 py-1">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Inbound Call Handled</p>
-                    <p className="text-xs text-gray-400">Dr. Ahmed Khalid booked a Demo.</p>
-                    <span className="text-[10px] text-gray-500">14 minutes ago</span>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {healthCards.map((card, index) => {
+            const Icon = card.icon;
+            return (
+              <motion.article
+                key={card.key}
+                initial={{ opacity: 0, y: 18 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.07 }}
+                className="glass rounded-2xl p-5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-300/80">{card.label}</p>
+                    <p className="mt-3 text-2xl font-semibold text-white">{card.value}</p>
                   </div>
-                  <CheckCircle size={14} className="text-green-400 mt-1" />
+                  <span className="rounded-xl border border-white/20 bg-white/10 p-2 text-cyan-200">
+                    <Icon size={18} />
+                  </span>
                 </div>
-              ))}
-            </div>
-          </div>
+              </motion.article>
+            );
+          })}
+        </section>
 
-          <div className="glass p-6 rounded-3xl bg-brain-sky/5 border-brain-sky/20">
-            <h4 className="font-bold mb-2">Basma Status</h4>
-            <div className="flex items-center gap-2 mt-4">
-              <div className="w-3 h-3 bg-green-500 rounded-full animate-ping" />
-              <span className="text-sm font-semibold">Active & Online</span>
+        <section className="grid gap-6 lg:grid-cols-3">
+          <article className="glass overflow-hidden rounded-3xl lg:col-span-2">
+            <header className="flex items-center justify-between border-b border-white/10 px-5 py-4 md:px-6">
+              <h2 className="text-lg font-semibold">{copy.title}</h2>
+              <span className="inline-flex items-center gap-2 text-xs text-slate-300">
+                <span className={`status-dot status-${statusData.status}`} />
+                {statusLabel}
+              </span>
+            </header>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[620px] text-sm">
+                <thead className="bg-white/5 text-xs uppercase tracking-[0.14em] text-slate-300/80">
+                  <tr>
+                    <th className="px-6 py-4 text-start">{copy.labels.service}</th>
+                    <th className="px-6 py-4 text-start">{copy.labels.state}</th>
+                    <th className="px-6 py-4 text-start">{copy.labels.latency}</th>
+                    <th className="px-6 py-4 text-start">{copy.labels.code}</th>
+                    <th className="px-6 py-4 text-start">{copy.labels.endpoint}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statusData.services.map((service) => (
+                    <tr key={service.id} className="border-t border-white/5 hover:bg-white/5">
+                      <td className="px-6 py-4 font-medium">{service.name}</td>
+                      <td className="px-6 py-4">
+                        <span className="inline-flex items-center gap-2">
+                          <span className={`status-dot status-${service.status}`} />
+                          {copy.labels[service.status] || service.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">{service.latencyMs}ms</td>
+                      <td className="px-6 py-4">{service.httpCode || "-"}</td>
+                      <td className="px-6 py-4 text-xs text-cyan-100/90">{service.endpoint}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-6">
-              <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <p className="text-xs text-gray-400">Calls Today</p>
-                <p className="text-lg font-bold">42</p>
-              </div>
-              <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <p className="text-xs text-gray-400">Avg Duration</p>
-                <p className="text-lg font-bold">3:12</p>
-              </div>
-            </div>
-          </div>
+          </article>
+
+          <aside className="space-y-5">
+            <article className="glass rounded-3xl p-5">
+              <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
+                <Gauge size={18} className="text-cyan-200" />
+                {copy.labels.refreshed}
+              </h3>
+              <p className="text-sm text-slate-300">
+                {new Date(statusData.timestamp).toLocaleString(locale === "ar" ? "ar-SA" : "en-US")}
+              </p>
+              <p className="mt-3 text-xs text-slate-400">Polling every 15 seconds</p>
+            </article>
+
+            <article className="glass rounded-3xl p-5">
+              <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
+                <MessageSquare size={18} className="text-orange-200" />
+                Live Channels
+              </h3>
+              <ul className="space-y-3 text-sm text-slate-200/90">
+                <li className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">Dashboard: {statusData.links.dashboard}</li>
+                <li className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">Voice: {statusData.links.voice}</li>
+                <li className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">Widget: {statusData.links.widget}</li>
+              </ul>
+            </article>
+          </aside>
+        </section>
+        <div>
+          {isLoading ? <p className="text-xs text-slate-400">Loading platform status...</p> : null}
         </div>
       </div>
-    </div>
+    </main>
   );
 }

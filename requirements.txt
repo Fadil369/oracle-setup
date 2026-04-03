@@ -4,3 +4,5 @@ pyyaml>=6.0
 pydantic>=2.5.0
 httpx>=0.26.0
 python-dotenv>=1.0.0
+qdrant-client>=1.11.3
+chromadb>=0.5.5

@@ -2,10 +2,13 @@ import { DurableObject } from 'cloudflare:workers';
 import { AIService } from '../../api/src/services/ai_service';
 import { sendN8nEvent } from '../../api/src/services/n8n';
 import { ensurePrimaryOwner } from '../../api/src/utils/owner';
+import { MemoryBrain } from './memory_brain';
 
 export interface Env {
   DB: D1Database;
   R2_STORAGE: R2Bucket;
+  AI: any;
+  BASMA_MEMORY_VECTOR: any;
   ANTHROPIC_API_KEY: string;
   BASMA_OWNER_EMAIL?: string;
   BASMA_OWNER_NAME?: string;
@@ -47,6 +50,15 @@ const DEFAULT_WIDGET_ORIGINS = new Set([
   'bsma.brainsait.org',
   'basma.brainsait.org',
   'localhost',
+]);
+
+const AUTONOMOUS_ACTION_PREFIX = '[AUTONOMOUS_ACTION:';
+const ALLOWED_AUTONOMOUS_ACTIONS = new Set([
+  'send_meeting_invite',
+  'sms_patient_link',
+  'create_crm_task',
+  'notify_partnership_team',
+  'notify_support_team',
 ]);
 
 function base64UrlToString(value: string) {
@@ -215,6 +227,58 @@ export class VoiceSession extends DurableObject {
   private lastFirstTokenLatencyMs: number | null = null;
   private sessionId = crypto.randomUUID();
 
+  private async resolveKnownVisitorId() {
+    const phone = typeof this.visitorData.phone === 'string' ? this.visitorData.phone : null;
+    const email = typeof this.visitorData.email === 'string' ? this.visitorData.email : null;
+    if (!phone && !email) {
+      return null;
+    }
+
+    const owner = await ensurePrimaryOwner(this.env.DB, {
+      email: this.env.BASMA_OWNER_EMAIL,
+      name: this.env.BASMA_OWNER_NAME,
+      companyName: 'BrainSAIT',
+    });
+
+    const visitor = await this.env.DB.prepare(`
+      SELECT id
+      FROM visitors
+      WHERE user_id = ? AND ((? IS NOT NULL AND phone = ?) OR (? IS NOT NULL AND email = ?))
+      ORDER BY last_contact DESC
+      LIMIT 1
+    `).bind(owner.id, phone, phone, email, email).first<{ id: string }>();
+
+    return visitor?.id || null;
+  }
+
+  private extractAutonomousActions(text: string) {
+    const actions: Array<{ action: string; payload: Record<string, unknown> }> = [];
+    const pattern = /\[AUTONOMOUS_ACTION:(\{.*?\})\]/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1]) as { action?: unknown; payload?: unknown };
+        if (
+          typeof parsed.action === 'string'
+          && ALLOWED_AUTONOMOUS_ACTIONS.has(parsed.action)
+          && parsed.payload
+          && typeof parsed.payload === 'object'
+          && !Array.isArray(parsed.payload)
+        ) {
+          actions.push({
+            action: parsed.action,
+            payload: parsed.payload as Record<string, unknown>,
+          });
+        }
+      } catch {
+        // Ignore malformed autonomous action markers.
+      }
+    }
+
+    return actions;
+  }
+
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.env = env;
@@ -313,7 +377,23 @@ export class VoiceSession extends DurableObject {
             ...(typeof data.company === 'string' ? { company: data.company } : {}),
           };
 
-          const memoryContext = await this.getMemoryContext();
+          if (!this.visitorData.visitorId) {
+            const knownVisitorId = await this.resolveKnownVisitorId();
+            if (knownVisitorId) {
+              this.visitorData.visitorId = knownVisitorId;
+            }
+          }
+
+          let memoryContext: any = await this.getMemoryContext();
+          const brain = new MemoryBrain(this.env);
+          if (this.visitorData.visitorId) {
+            const semanticContext = await brain.retrieveContext(this.visitorData.visitorId as string, userMessage);
+            memoryContext = {
+              recentSQLMemory: memoryContext,
+              deepSemanticMatches: semanticContext
+            };
+          }
+
           this.conversationHistory.push({ role: 'user', content: userMessage });
 
           const aiService = new AIService(this.env.ANTHROPIC_API_KEY);
@@ -348,8 +428,33 @@ export class VoiceSession extends DurableObject {
             if (done) break;
 
             const text = new TextDecoder().decode(value);
+
+            const autonomousActions = this.extractAutonomousActions(text);
+            for (const action of autonomousActions) {
+              try {
+                await sendN8nEvent(this.env, {
+                  event: 'voice.autonomous_action',
+                  source: 'basma-voice',
+                  timestamp: Date.now(),
+                  payload: {
+                    action: action.action,
+                    actionPayload: action.payload,
+                    sessionId: this.sessionId,
+                    visitorId: this.visitorData.visitorId || null,
+                  },
+                });
+              } catch {
+                // Keep the live stream flowing even if an automation endpoint is unavailable.
+              }
+            }
+
             assistantResponse += text;
-            ws.send(JSON.stringify({ type: 'ai_response_chunk', text }));
+            const cleanText = text
+              .replace(/\[VARIOUS ACTIONS\]/g, '')
+              .replace(/\[AUTONOMOUS_ACTION:\{.*?\}\]/g, '');
+            if (cleanText.trim()) {
+              ws.send(JSON.stringify({ type: 'ai_response_chunk', text: cleanText }));
+            }
 
             if (!firstChunkSeen) {
               firstChunkSeen = true;
@@ -598,8 +703,19 @@ export class VoiceSession extends DurableObject {
         this.visitorData.language || 'mixed',
         0.75,
         Date.now(),
-        Date.now(),
       ).run();
+
+      // Fire off into semantic vector memory for RAG lookups next time they call
+      const brain = new MemoryBrain(this.env);
+      if (this.visitorData.visitorId) {
+        await brain.encodeAndStore({
+          visitorId: this.visitorData.visitorId as string,
+          callId,
+          summary: firstUserMessage.substring(0, 200),
+          sentiment: (this.visitorData.sentiment as string) || 'neutral',
+          language: (this.visitorData.language as string) || 'mixed'
+        });
+      }
 
       await sendN8nEvent(this.env, {
         event: 'voice.call.completed',

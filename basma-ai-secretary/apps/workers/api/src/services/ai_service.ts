@@ -40,6 +40,7 @@ ARABIC:
 
 export class AIService {
   private client: Anthropic;
+  private readonly autonomousActionPrefix = '[AUTONOMOUS_ACTION:';
 
   private parseJsonObject(text: string) {
     const trimmed = text.trim();
@@ -79,17 +80,51 @@ export class AIService {
       max_tokens: options.maxTokens || 1200,
       system: `${BASMA_SYSTEM_PROMPT}\n\nVisitor Context: ${JSON.stringify(visitorContext)}\n\nLanguage hint: ${languageHint}. ${bilingualGuardrails}`,
       messages,
-      stream: true
+      stream: true,
+      tools: [{
+        name: 'trigger_n8n_automation',
+        description: 'Trigger a real-time autonomous core operation immediately while on the call. Examples: "send_meeting_invite", "page_doctor_on_call", "escalate_to_icu", "sms_patient_link".',
+        input_schema: {
+          type: 'object',
+          properties: {
+            action: { type: 'string' },
+            payload: { type: 'object' }
+          },
+          required: ['action', 'payload']
+        }
+      }]
     });
+    const parseJsonObject = (text: string) => this.parseJsonObject(text);
+    const autonomousActionPrefix = this.autonomousActionPrefix;
 
     return new ReadableStream({
       async start(controller) {
+        let isInvokingTool = false;
+        let toolDataAccumulator = '';
+        let toolActionName = '';
+
         for await (const event of stream) {
-          if (event.type === 'content_block_delta' && 
-              event.delta.type === 'text_delta') {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             controller.enqueue(new TextEncoder().encode(event.delta.text));
+          } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+            isInvokingTool = true;
+            toolActionName = event.content_block.name;
+          } else if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+            toolDataAccumulator += event.delta.partial_json;
           }
         }
+
+        if (isInvokingTool && toolActionName === 'trigger_n8n_automation' && toolDataAccumulator) {
+          try {
+            const parsedData = parseJsonObject(toolDataAccumulator);
+            controller.enqueue(
+              new TextEncoder().encode(`\n${autonomousActionPrefix}${JSON.stringify(parsedData)}]`),
+            );
+          } catch {
+            // Ignore malformed tool payloads rather than emitting unsafe control text.
+          }
+        }
+
         controller.close();
       }
     });

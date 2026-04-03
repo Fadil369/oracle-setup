@@ -3,12 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --background: #020617;
-  --foreground: #f8fafc;
-  --card: rgba(30, 41, 59, 0.5);
-  --card-border: rgba(148, 163, 184, 0.1);
-  --accent: #0ea5e9;
-  --accent-orange: #ea580c;
+  --background: #020b1f;
+  --foreground: #f4f8ff;
+  --card: rgba(9, 30, 58, 0.54);
+  --card-border: rgba(143, 219, 255, 0.24);
+  --accent: #2ac8ff;
+  --accent-orange: #ff8a3d;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
 }
 
 [data-theme='light'] {
@@ -21,28 +24,48 @@
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-display), 'Space Grotesk', sans-serif;
   overflow-x: hidden;
 }
 
 .glass {
-  @apply backdrop-blur-xl border bg-white/5 border-white/10;
+  @apply backdrop-blur-2xl border bg-white/[0.07] border-white/[0.16];
 }
 
 .mesh-gradient {
-  background-color: hsla(215, 28%, 17%, 1);
-  background-image: 
-    radial-gradient(at 0% 0%, hsla(210, 100%, 20%, 1) 0px, transparent 50%),
-    radial-gradient(at 50% 0%, hsla(199, 89%, 48%, 0.4) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, hsla(21, 91%, 48%, 0.3) 0px, transparent 50%),
-    radial-gradient(at 0% 100%, hsla(210, 100%, 20%, 1) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, hsla(199, 89%, 48%, 0.4) 0px, transparent 50%);
+  background-color: #010817;
+  background-image:
+    radial-gradient(circle at 12% 14%, rgba(27, 94, 143, 0.45) 0, transparent 38%),
+    radial-gradient(circle at 86% 18%, rgba(42, 200, 255, 0.28) 0, transparent 34%),
+    radial-gradient(circle at 18% 84%, rgba(255, 138, 61, 0.24) 0, transparent 35%),
+    radial-gradient(circle at 88% 82%, rgba(20, 90, 150, 0.35) 0, transparent 40%),
+    linear-gradient(130deg, #010817 0%, #04142f 48%, #091b36 100%);
 }
 
 .rtl {
   direction: rtl;
+  font-family: var(--font-arabic), 'Cairo', sans-serif;
 }
 
 .ltr {
   direction: ltr;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.06);
+}
+
+.status-operational {
+  background: var(--success);
+}
+
+.status-degraded {
+  background: var(--warning);
+}
+
+.status-incident {
+  background: var(--danger);
 }

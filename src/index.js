@@ -293,7 +293,6 @@ function requireApiKey(request, env) {
   const headerKey = request.headers.get("X-API-Key") ?? "";
   const queryKey = url.searchParams.get("key") ?? "";
   const key = bearerKey || headerKey || queryKey;
-
   if (key !== env.API_KEY) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -345,7 +344,6 @@ export default {
     // ── Auth guard — all non-public routes require Cloudflare Access + API key ─────────────
     const cfAccessErr = await requireAccessJwt(request, env);
     if (cfAccessErr) return cfAccessErr;
-
     const authErr = requireApiKey(request, env);
     if (authErr) return authErr;
 

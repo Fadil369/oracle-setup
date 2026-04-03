@@ -14,6 +14,8 @@
     "deploy": "wrangler deploy",
     "deploy:portals": "wrangler deploy --config wrangler.toml",
     "deploy:scanner": "wrangler deploy --config wrangler.scanner.toml",
+    "deploy:edge-router": "wrangler deploy --config infra-v3/edge-router/wrangler.toml",
+    "cloudflare:bos:bootstrap": "node scripts/cloudflare-bos-bootstrap.mjs",
     "oracle:dev": "node scripts/brainsait-oracle.mjs deploy --target local-dev",
     "oracle:status": "node scripts/brainsait-oracle.mjs status",
     "oracle:backup": "node scripts/brainsait-oracle.mjs backup",
