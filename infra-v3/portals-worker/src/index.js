@@ -1,35 +1,51 @@
 /**
- * portals.elfadil.com — BrainSAIT Healthcare Control Tower v3.3
+ * brainsait.org — BrainSAIT Healthcare Control Tower v3.3
  * Cloudflare Worker
  *
  * FIXES from v2:
  *   FIX-1  Madinah shown as "Offline" → now live-probed (it's online)
- *   FIX-2  Khamis subdomain added (oracle-khamis.elfadil.com)
+ *   FIX-2  Khamis subdomain added (oracle-khamis.brainsait.org)
  *   FIX-3  Correct login paths per branch (Madinah/Abha use /Oasis/...)
  *   FIX-4  Health check is now LIVE (probes each tunnel URL on every request)
  *   FIX-5  Jizan: probe timeout set to 8s (it's slow, not dead)
  *   FIX-6  Added /api/health JSON endpoint for COMPLIANCELINC scanner
- *   FIX-7  Added /api/scan/:branch proxy for oracle-claim-scanner Worker
- *   FIX-8  API key auth enforced on /api/control-tower and /api/scan/:branch
+ *   FIX-7  Added /api/scan/:branch advisory endpoint with secure scanner passthrough
+ *   FIX-8  API key auth enforced on /api/control-tower and authenticated /api/scan/:branch
  *   FIX-9  CORS preflight (OPTIONS) handler added
- *   FIX-10 Error boundary on dashboard route (503 fallback on crash)
+ *   FIX-10 Error boundary on public and control-tower HTML routes
  *   NEW    Cron trigger: health check every 5 min → stored in KV
  *
  * Routes:
- *   GET      /                     → portal dashboard HTML
+ *   GET      /                     → BrainSAIT public landing HTML
+ *   GET      /patient             → BSMA patient front door
+ *   GET      /givc                → provider interface entry page
+ *   GET      /sbs                 → payer interface entry page
+ *   GET      /government          → government interface entry page
+ *   GET      /control-tower       → operator dashboard HTML
  *   GET      /api/control-tower/summary → redacted lightweight snapshot (public)
  *   GET      /api/control-tower/details → redacted detailed snapshot (public)
  *   GET      /api/control-tower    → combined snapshot with internals (requires API key)
+ *   GET      /api/infrastructure   → public infrastructure/service directory snapshot
+ *   GET      /api/platform-apps    → public platform application summary
  *   GET/POST /api/deploy/oracle    → plan, validate, or trigger Oracle deployment (requires X-API-Key)
  *   GET      /api/runbooks         → runbook index for the action queue
  *   GET      /api/runbooks/:id     → runbook JSON detail
- *   GET/POST /api/scan/:branch     → proxy to oracle-claim-scanner Worker (requires X-API-Key)
+ *   GET/POST /api/scan/:branch     → public advisory or secure oracle-claim-scanner passthrough
  *   GET      /api/health           → JSON health of all branches (public)
  *   GET      /api/health/:branch   → JSON health of one branch (public)
  *   GET      /api/branches         → branch config, no passwords (public)
  *   GET      /runbooks/:id         → operator-facing runbook page
  *   GET      /health               → simple 200 OK liveness probe
  *   OPTIONS  /*                    → CORS preflight
+ *   GET  /api/control-tower   → combined snapshot for hospitals, external services, and action queue
+ *   GET  /api/runbooks        → runbook index for the action queue
+ *   GET  /api/runbooks/:id    → runbook JSON detail
+ *   GET  /api/health          → JSON health of all branches
+ *   GET  /api/health/:branch  → JSON health of one branch
+ *   POST /api/scan/:branch    → scan guidance for the selected branch
+ *   GET  /api/branches        → branch config (no passwords)
+ *   GET  /runbooks/:id        → operator-facing runbook page
+ *   GET  /health              → simple 200 OK liveness probe
  */
 
 // ── MOH external portals (simple HTTP probe, no login required) ──────────────
@@ -39,7 +55,7 @@ const MOH_PORTALS = [
     name:     "بوابة المطالبات",
     nameEn:   "MOH Claims Portal",
     desc:     "E-Claims System",
-    url:      "https://moh-claims.elfadil.com/",
+    url:      "https://moh-claims.brainsait.org/",
     provider: "GlobeMed Saudi Arabia",
   },
   {
@@ -47,7 +63,7 @@ const MOH_PORTALS = [
     name:     "بوابة الموافقات",
     nameEn:   "MOH Approval Portal",
     desc:     "Purchasing Program System",
-    url:      "https://moh-approval.elfadil.com/",
+    url:      "https://moh-approval.brainsait.org/",
     provider: "Ministry of Health",
   },
   {
@@ -59,6 +75,229 @@ const MOH_PORTALS = [
     provider: "NPHIES",
   },
 ];
+
+const INFRASTRUCTURE_REFERENCE = {
+  company: "BrainSAIT LTD",
+  operations: "Saudi Arabia (Riyadh)",
+  cloudflareAccountId: "d7b99530559ab4f2545e9bdc72a7ab9b",
+  oid: "1.3.6.1.4.1.61026",
+  primaryDomain: "brainsait.org",
+  referenceDomains: ["brainsait.io", "brainsait.de", "elfadil.com"],
+  activeWorkers: 67,
+  d1Databases: 13,
+  kvNamespaces: 20,
+  edgeModel: "Single public edge entry with modular healthcare, billing, AI, and ERP services behind Cloudflare and private network links.",
+  networkStack: [
+    "Cloudflare Workers and Pages at the public edge",
+    "Cloudflare Tunnels for private service ingress",
+    "Tailscale mesh networking for node-to-node connectivity",
+    "D1, KV, and R2 for edge-native state, caching, and storage",
+  ],
+};
+
+const EDGE_SERVICE_DIRECTORY = [
+  {
+    path: "/patient",
+    aliases: ["/bsma"],
+    slug: "bsma",
+    tone: "teal",
+    shortName: "BSMA",
+    title: "BSMA Patient Interface",
+    host: "app.brainsait.org",
+    category: "Patient interface",
+    audience: "Patients, families, and guided front-desk journeys",
+    kind: "primary",
+    description: "BSMA is the patient front door for appointments, medical records, claims follow-up, and Arabic-first care communication across BrainSAIT.",
+    features: [
+      "Patient-facing appointments, records, and claims access",
+      "Arabic-first experience with guided digital journeys",
+      "Connected to provider, payer, and government workflows",
+    ],
+  },
+  {
+    path: "/givc",
+    slug: "givc",
+    tone: "gold",
+    shortName: "GIVC",
+    title: "GIVC Provider Interface",
+    host: "givc.brainsait.org",
+    category: "Provider interface",
+    audience: "Clinicians, nursing teams, and care coordinators",
+    kind: "primary",
+    description: "Provider-facing access to patient records, encounters, scheduling, and AI-assisted clinical operations.",
+    features: [
+      "Clinician and care-team operational workflows",
+      "Care coordination with voice and AI support",
+      "Connected to BSMA patient context and Oracle operations",
+    ],
+  },
+  {
+    path: "/sbs",
+    slug: "sbs",
+    tone: "blue",
+    shortName: "SBS",
+    title: "SBS Payer Interface",
+    host: "sbs.brainsait.org",
+    category: "Payer interface",
+    audience: "RCM teams, coders, and billing operators",
+    kind: "primary",
+    description: "Payer-facing revenue cycle workflows for eligibility, coding quality, rejections, claim readiness, and reimbursement follow-up.",
+    features: [
+      "NPHIES-aware revenue workflows",
+      "Claims scanner and rejection intelligence",
+      "Oracle Bridge-backed medical and claims reads",
+    ],
+  },
+  {
+    path: "/government",
+    aliases: ["/nphies", "/etimad"],
+    slug: "government",
+    tone: "white",
+    shortName: "Gov",
+    title: "Government Interface",
+    host: "nphies.sa",
+    category: "Government interface",
+    audience: "NPHIES, Etimad, and public-sector submission teams",
+    kind: "primary",
+    description: "Government submission lane for Saudi exchange, reimbursement coordination, and Etimad-linked approval paths.",
+    launchHref: "https://nphies.sa",
+    launchLabel: "Open NPHIES",
+    relatedLinks: [
+      { href: "https://nphies.sa", label: "NPHIES exchange" },
+      { href: "https://etimad.sa", label: "Etimad procurement and approvals" },
+    ],
+    features: [
+      "NPHIES-aligned exchange and payer submission readiness",
+      "Etimad-linked government coordination paths",
+      "Connected to SBS payer operations and Oracle claim flows",
+    ],
+  },
+  {
+    path: "/api",
+    slug: "api",
+    tone: "white",
+    shortName: "API",
+    title: "Healthcare API Gateway",
+    host: "api.brainsait.org",
+    category: "Interoperability",
+    audience: "Platform engineers, integration teams, and partner systems",
+    kind: "support",
+    description: "Unified healthcare and workflow APIs for FHIR, patient services, claims orchestration, and AI-driven platform tasks.",
+    features: [
+      "FHIR and healthcare integration endpoints",
+      "Claim, patient, and workflow service surfaces",
+      "Shared audit and request-tracing patterns",
+    ],
+  },
+  {
+    path: "/mcp",
+    slug: "mcp",
+    tone: "white",
+    shortName: "MCP",
+    title: "MCP Agent Gateway",
+    host: "mcp.brainsait.org",
+    category: "AI orchestration",
+    audience: "Internal AI agents, automation surfaces, and platform operators",
+    kind: "support",
+    description: "Model Context Protocol access for BrainSAIT agents, shared tools, orchestration routes, and controlled automation.",
+    features: [
+      "MASTERLINC and domain-specific agent surfaces",
+      "Shared operational APIs for internal tooling",
+      "Central entrypoint for agent-to-platform access",
+    ],
+  },
+  {
+    path: "/oasis",
+    slug: "oasis",
+    tone: "teal",
+    shortName: "Oasis+",
+    title: "Oracle Oasis+ Gateway",
+    host: "oasis.brainsait.org",
+    category: "ERP access",
+    audience: "Hospital operations and branch administrators",
+    kind: "support",
+    description: "Zero-trust access to Oracle Oasis+ ERP across the hospital network with live operational monitoring.",
+    features: [
+      "Branch-aware Oracle and hospital access",
+      "Cloudflare Tunnel-protected connectivity",
+      "Aligned with Control Tower health monitoring",
+    ],
+  },
+  {
+    path: "/oracle",
+    slug: "oracle",
+    tone: "teal",
+    shortName: "Oracle",
+    title: "Oracle Bridge and Claim Scanner",
+    host: "oracle.brainsait.org",
+    category: "Claims intelligence",
+    audience: "Claims teams and Oracle-integrated automation",
+    kind: "support",
+    description: "Oracle Bridge sessions, claim scanning, medical records retrieval, and operational integration for hospital billing flows.",
+    features: [
+      "Server-side Oracle session handling",
+      "Scanner telemetry into the Control Tower",
+      "Bridged labs, radiology, documents, and claims data",
+    ],
+  },
+  {
+    path: "/status",
+    slug: "status",
+    tone: "white",
+    shortName: "Status",
+    title: "Public Status and Operations",
+    host: "status.brainsait.org",
+    category: "Public observability",
+    audience: "Leadership, partners, and operations teams",
+    kind: "support",
+    description: "Public-facing operational summary for hospitals, external services, claim readiness, and platform actions.",
+    features: [
+      "Live snapshot powered by the control-tower model",
+      "Safe public operations view without internal controls",
+      "Linked to infrastructure metadata and service directory",
+    ],
+  },
+  {
+    path: "/docs",
+    slug: "docs",
+    tone: "white",
+    shortName: "Docs",
+    title: "Documentation Gateway",
+    host: "docs.brainsait.org",
+    category: "Knowledge access",
+    audience: "Implementation teams, partners, and operators",
+    kind: "support",
+    description: "Documentation and reference access for platform routes, operational procedures, and integration guidance.",
+    features: [
+      "Reference routing and architecture surfaces",
+      "Operational documentation entrypoint",
+      "Linked from the main edge domain",
+    ],
+  },
+  {
+    path: "/admin",
+    slug: "admin",
+    tone: "white",
+    shortName: "Admin",
+    title: "Admin and Control Surface",
+    host: "admin.brainsait.org",
+    category: "Privileged operations",
+    audience: "Platform administrators and incident responders",
+    kind: "support",
+    description: "Privileged operator entrypoint for admin workflows, escalations, and controlled access into platform management surfaces.",
+    features: [
+      "Control-tower-aligned administrative routing",
+      "Zero-trust operator posture",
+      "Runbook and incident workflow adjacency",
+    ],
+  },
+];
+
+const EDGE_SERVICE_ROUTE_MAP = new Map(
+  EDGE_SERVICE_DIRECTORY.flatMap((service) =>
+    [service.path, ...(service.aliases || [])].map((path) => [path, service]),
+  ),
+);
 
 const CONTROL_TOWER_LAYERS = [
   {
@@ -82,7 +321,7 @@ const CONTROL_TOWER_LAYERS = [
   {
     label: "Layer 4",
     title: "Control Tower Dashboard",
-    detail: "Leadership-grade monitoring, alerting, and operational automation live here on portals.elfadil.com.",
+    detail: "Leadership-grade monitoring, alerting, and operational automation live across brainsait.org and the Control Tower.",
     outcome: "Operate the healthcare network as a single system.",
   },
 ];
@@ -186,6 +425,69 @@ const DATA_PRODUCTS = [
   {
     title: "Hospital Scorecards",
     detail: "Branch-level performance snapshots for leadership, finance, and operations teams.",
+  },
+];
+
+const PLATFORM_APP_BLUEPRINT = [
+  {
+    id: "oracle-claim-scanner",
+    name: "Oracle Claim Scanner",
+    category: "Operations",
+    sourceType: "live-service",
+    description: "Cloudflare worker that scans Oracle claim bundles, persists watchlist state, and feeds telemetry into the control tower.",
+    automationFocus: "Batch scans, watchlist refresh, and scanner session reuse across hospitals.",
+    href: "/api/control-tower",
+    hrefLabel: "Open live claims feed",
+  },
+  {
+    id: "fhir-integration-bridge",
+    name: "FHIR Integration Bridge",
+    category: "Interoperability",
+    sourceType: "embedded-pipeline",
+    description: "Node-to-Python bridge that validates FHIR payloads and enriches SBS coding before submission.",
+    automationFocus: "Pre-submit validation, SBS enrichment, and NPHIES-ready bundle construction.",
+    href: null,
+    hrefLabel: "Embedded in pipeline",
+  },
+  {
+    id: "sbs-validator",
+    name: "SBS Coding Validator",
+    category: "Coding Quality",
+    sourceType: "embedded-pipeline",
+    description: "Enhanced SBS and FHIR validation stack for code hygiene, prior-auth flags, and NPHIES rule enforcement.",
+    automationFocus: "Detect contract-mapping issues before they become claim blockers.",
+    href: null,
+    hrefLabel: "Embedded in pipeline",
+  },
+  {
+    id: "rajhi-pipeline-factory",
+    name: "Batch Pipeline Factory",
+    category: "Revenue Recovery",
+    sourceType: "derived-workflow",
+    description: "Normalizes payer batches, builds attachment matrices, and prepares appeal-ready submission payloads.",
+    automationFocus: "Orchestrate batch preparation, prioritization, and artifact generation for each appeal window.",
+    href: null,
+    hrefLabel: "Pipeline workflow",
+  },
+  {
+    id: "nphies-assisted-submit",
+    name: "NPHIES Assisted Submitter",
+    category: "Submission",
+    sourceType: "hybrid-operator",
+    description: "Guided operator workflow that opens NPHIES communication mode, attaches evidence, and captures submission proof.",
+    automationFocus: "Human-in-the-loop submission with safety checks, screenshots, and success verification.",
+    href: "https://nphies.sa/",
+    hrefLabel: "Open NPHIES",
+  },
+  {
+    id: "appeal-letter-generator",
+    name: "Appeal Letter Generator",
+    category: "Documentation",
+    sourceType: "embedded-pipeline",
+    description: "Builds bilingual appeal letters aligned to rejection codes, deadlines, and payer communication expectations.",
+    automationFocus: "Generate supporting documents for fast claims recovery across high-priority bundles.",
+    href: null,
+    hrefLabel: "Embedded in pipeline",
   },
 ];
 
@@ -458,7 +760,7 @@ const BRANCHES = [
     id:          "riyadh",
     name:        "الرياض",
     nameEn:      "Riyadh Hospital",
-    subdomain:   "oracle-riyadh.elfadil.com",
+    subdomain:   "oracle-riyadh.brainsait.org",
     backend:     "https://128.1.1.185",
     loginPath:   "/prod/faces/Home",
     tls:         true,
@@ -469,7 +771,7 @@ const BRANCHES = [
     id:          "madinah",
     name:        "المدينة المنورة",
     nameEn:      "Madinah Hospital",
-    subdomain:   "oracle-madinah.elfadil.com",
+    subdomain:   "oracle-madinah.brainsait.org",
     backend:     "http://172.25.11.26",
     loginPath:   "/Oasis/faces/Login.jsf",   // FIX-1+3: was wrong path + wrong status
     tls:         false,
@@ -480,7 +782,7 @@ const BRANCHES = [
     id:          "unaizah",
     name:        "عنيزة",
     nameEn:      "Unaizah Hospital",
-    subdomain:   "oracle-unaizah.elfadil.com",
+    subdomain:   "oracle-unaizah.brainsait.org",
     backend:     "http://10.0.100.105",
     loginPath:   "/prod/faces/Login.jsf",
     tls:         false,
@@ -491,7 +793,7 @@ const BRANCHES = [
     id:          "khamis",
     name:        "خميس مشيط",
     nameEn:      "Khamis Mushait Hospital",
-    subdomain:   "oracle-khamis.elfadil.com",  // FIX-2: dedicated subdomain
+    subdomain:   "oracle-khamis.brainsait.org",  // FIX-2: dedicated subdomain
     backend:     "http://172.30.0.77",
     loginPath:   "/prod/faces/Login.jsf",
     tls:         false,
@@ -502,7 +804,7 @@ const BRANCHES = [
     id:          "jizan",
     name:        "جازان",
     nameEn:      "Jizan Hospital",
-    subdomain:   "oracle-jizan.elfadil.com",
+    subdomain:   "oracle-jizan.brainsait.org",
     backend:     "http://172.17.4.84",
     loginPath:   "/prod/faces/Login.jsf",
     tls:         false,
@@ -513,7 +815,7 @@ const BRANCHES = [
     id:          "abha",
     name:        "أبها",
     nameEn:      "Abha Hospital",
-    subdomain:   "oracle-abha.elfadil.com",
+    subdomain:   "oracle-abha.brainsait.org",
     backend:     "http://172.19.1.1",
     loginPath:   "/Oasis/faces/Home",   // FIX-3: Abha uses /Oasis/faces/Home
     tls:         false,
@@ -787,7 +1089,7 @@ async function fetchScannerClaimsFeed(env) {
   }
 
   const watchQuery = buildClaimsWatchlistIds().join(",");
-  const scannerUrl = new URL(normalizeUrl(env.SCANNER_URL || "https://oracle-scanner.elfadil.com", "/control-tower/claims"));
+  const scannerUrl = new URL(normalizeUrl(env.SCANNER_URL || "https://oracle-scanner.brainsait.org", "/control-tower/claims"));
   scannerUrl.searchParams.set("watch", watchQuery);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
@@ -1007,6 +1309,133 @@ function attachRunbook(action, runbookId) {
   };
 }
 
+function buildPlatformApps(claims) {
+  const validationDemand = claims.approvals.priorAuthClaims + claims.approvals.medicalNecessityClaims + claims.approvals.coverageReviewClaims;
+  const scannerTone = !claims.scanner.liveSystem?.available || claims.sourceMode === "fallback-reference"
+    ? "critical"
+    : (claims.sourceMode === "watchlist-live" || (claims.scanner.latestBatch.errorCount || 0) > 0)
+      ? "watch"
+      : "stable";
+
+  const scannerApp = {
+    ...PLATFORM_APP_BLUEPRINT.find((app) => app.id === "oracle-claim-scanner"),
+    tone: scannerTone,
+    healthLabel: scannerTone === "stable" ? "Batch live" : scannerTone === "watch" ? "Watchlist live" : "Feed degraded",
+    signal: scannerTone === "stable"
+      ? "Full live-batch telemetry is flowing from the scanner into the control tower."
+      : scannerTone === "watch"
+        ? "The scanner is live, but the control tower is operating on watchlist telemetry or recent batch errors."
+        : "The live scanner feed is unavailable and the portal is falling back to reference claims data.",
+    automationLabel: claims.sourceMode === "live-batch" ? "Closed-loop automation" : claims.sourceMode === "watchlist-live" ? "Partial automation" : "Automation blocked",
+    metricPrimary: { label: "Total scans", value: String(claims.scanner.liveSystem?.totalScans || 0) },
+    metricSecondary: { label: "Avg scan time", value: claims.scanner.liveSystem?.avgDurationMs ? `${claims.scanner.liveSystem.avgDurationMs} ms` : "N/A" },
+    sourceDetail: claims.sourceMode,
+  };
+
+  const fhirTone = validationDemand > 0 ? "watch" : "stable";
+  const fhirApp = {
+    ...PLATFORM_APP_BLUEPRINT.find((app) => app.id === "fhir-integration-bridge"),
+    tone: fhirTone,
+    healthLabel: fhirTone === "stable" ? "Ready" : "Validation demand",
+    signal: validationDemand > 0
+      ? `${validationDemand} claims currently depend on FHIR and NPHIES pre-submit validation paths before safe submission.`
+      : "FHIR validation and coding enrichment are staged and ready for the next batch.",
+    automationLabel: "Validation automation ready",
+    metricPrimary: { label: "Validation demand", value: String(validationDemand) },
+    metricSecondary: { label: "Prior-auth flags", value: String(claims.approvals.priorAuthClaims) },
+    sourceDetail: "embedded-node-python-bridge",
+  };
+
+  const sbsTone = claims.summary.blockedClaims > 0 ? "critical" : validationDemand > 0 ? "watch" : "stable";
+  const sbsApp = {
+    ...PLATFORM_APP_BLUEPRINT.find((app) => app.id === "sbs-validator"),
+    tone: sbsTone,
+    healthLabel: sbsTone === "critical" ? "Correction required" : sbsTone === "watch" ? "Validation active" : "Ready",
+    signal: claims.summary.blockedClaims > 0
+      ? `${claims.summary.blockedClaims} claims are blocked by ${claims.rejections.blockerIssue.code} and should be corrected through the SBS mapping workflow.`
+      : validationDemand > 0
+        ? "The SBS validator should be applied to clear prior-auth and coding-sensitive rejection patterns before submission."
+        : "No active SBS mapping blockers are pressuring the current appeal batch.",
+    automationLabel: claims.summary.blockedClaims > 0 ? "Correction queue open" : "Coding guardrails ready",
+    metricPrimary: { label: "Blocked claims", value: String(claims.summary.blockedClaims) },
+    metricSecondary: { label: "Blocked items", value: String(claims.payments.blockedServiceItems) },
+    sourceDetail: claims.rejections.blockerIssue.code || "no-blocker",
+  };
+
+  const orchestratorTone = (claims.scanner.latestBatch.errorCount || 0) > 0 && (claims.scanner.latestBatch.processed || 0) === 0
+    ? "critical"
+    : ((claims.scanner.latestBatch.errorCount || 0) > 0 || claims.sourceMode !== "live-batch")
+      ? "watch"
+      : "stable";
+  const orchestratorApp = {
+    ...PLATFORM_APP_BLUEPRINT.find((app) => app.id === "rajhi-pipeline-factory"),
+    tone: orchestratorTone,
+    healthLabel: orchestratorTone === "critical" ? "Replay required" : orchestratorTone === "watch" ? "Needs fresh batch" : "Ready",
+    signal: orchestratorTone === "critical"
+      ? `The latest scanner batch produced ${claims.scanner.latestBatch.errorCount} errors and processed no eligible claims. Replay is required.`
+      : orchestratorTone === "watch"
+        ? "The batch pipeline is prepared, but a fresh scanner run is still needed to promote full live-batch coverage."
+        : "Batch preparation and scanner orchestration are aligned to the current live portfolio.",
+    automationLabel: orchestratorTone === "stable" ? "Batch automation ready" : "Replay or refresh needed",
+    metricPrimary: { label: "Eligible claims", value: String(claims.scanner.latestBatch.totalEligible || claims.summary.readyClaims) },
+    metricSecondary: { label: "Batch errors", value: String(claims.scanner.latestBatch.errorCount || 0) },
+    sourceDetail: claims.scanner.latestBatch.sourceBatchId || claims.batchId,
+  };
+
+  const nphiesTone = !claims.upstreams.nphies.online
+    ? "critical"
+    : (claims.upstreams.nphies.tone === "watch" || claims.summary.readyClaims > 0)
+      ? "watch"
+      : "stable";
+  const nphiesApp = {
+    ...PLATFORM_APP_BLUEPRINT.find((app) => app.id === "nphies-assisted-submit"),
+    tone: nphiesTone,
+    healthLabel: !claims.upstreams.nphies.online ? "Upstream blocked" : claims.summary.readyClaims > 0 ? "Submission queue ready" : "Standing by",
+    signal: !claims.upstreams.nphies.online
+      ? "NPHIES is unavailable, so assisted submission should be paused until upstream stability returns."
+      : claims.summary.readyClaims > 0
+        ? `${claims.summary.readyClaims} claims are ready for communication-mode submission inside the current appeal window.`
+        : "NPHIES is reachable and the assisted submitter is ready for the next operator-driven release.",
+    automationLabel: claims.summary.readyClaims > 0 ? "Human-in-loop ready" : "Submission lane standing by",
+    metricPrimary: { label: "Ready claims", value: String(claims.summary.readyClaims) },
+    metricSecondary: { label: "Days remaining", value: claims.daysRemaining == null ? "N/A" : String(claims.daysRemaining) },
+    sourceDetail: claims.upstreams.nphies.label,
+  };
+
+  const appealTone = claims.summary.readyClaims > 0 && claims.daysRemaining <= 3
+    ? "critical"
+    : (claims.summary.readyClaims > 0 || claims.summary.blockedClaims > 0)
+      ? "watch"
+      : "stable";
+  const appealApp = {
+    ...PLATFORM_APP_BLUEPRINT.find((app) => app.id === "appeal-letter-generator"),
+    tone: appealTone,
+    healthLabel: appealTone === "critical" ? "Deadline pressure" : appealTone === "watch" ? "Active" : "Ready",
+    signal: claims.summary.readyClaims > 0
+      ? `Appeal artifacts should be generated for ${claims.summary.readyClaims} ready claims before the ${claims.daysRemaining}-day window closes.`
+      : claims.summary.blockedClaims > 0
+        ? "Appeal documents remain useful, but coding blockers should be resolved first for blocked bundles."
+        : "Letter generation capacity is available and waiting on the next recovery batch.",
+    automationLabel: claims.summary.readyClaims > 0 ? "Document generation active" : "Templates ready",
+    metricPrimary: { label: "Ready appeals", value: String(claims.summary.readyClaims) },
+    metricSecondary: { label: "Critical bundles", value: String(claims.criticalClaims.length) },
+    sourceDetail: claims.batchId,
+  };
+
+  return [scannerApp, fhirApp, sbsApp, orchestratorApp, nphiesApp, appealApp];
+}
+
+function summarizePlatformApps(apps) {
+  return {
+    total: apps.length,
+    stable: apps.filter((app) => app.tone === "stable").length,
+    watch: apps.filter((app) => app.tone === "watch").length,
+    critical: apps.filter((app) => app.tone === "critical").length,
+    live: apps.filter((app) => app.sourceType === "live-service").length,
+    embedded: apps.filter((app) => app.sourceType !== "live-service").length,
+  };
+}
+
 function buildPriorityActions(hospitals, externalServices, claims) {
   const actions = [];
 
@@ -1149,6 +1578,38 @@ function buildPriorityActions(hospitals, externalServices, claims) {
     }, "scanner-http-404"));
   }
 
+  if (claims.sourceMode === "fallback-reference") {
+    actions.push(attachRunbook({
+      id: "scanner-feed-restore",
+      severity: "critical",
+      owner: "Integration Gateway",
+      target: claims.batchId,
+      scope: "Platform App",
+      title: "Restore live scanner feed to the control tower",
+      description: "The control tower is operating on fallback reference claims data because the live scanner feed is unavailable.",
+      recommendation: "Repair the scanner service binding or HTTP path first, then rerun a safe claims fetch before resuming operational decisions from the dashboard.",
+      href: "/api/control-tower",
+      hrefLabel: "Open control-tower API",
+      tone: "critical",
+      latency: null,
+    }, "scanner-http-404"));
+  } else if (claims.sourceMode === "watchlist-live") {
+    actions.push(attachRunbook({
+      id: "scanner-promote-live-batch",
+      severity: "medium",
+      owner: "Integration Gateway",
+      target: claims.batchId,
+      scope: "Platform App",
+      title: "Promote watchlist telemetry to full live-batch coverage",
+      description: "The scanner is live, but portfolio totals are still using the current reference batch because a fresh batch summary is not yet available.",
+      recommendation: "Trigger a safe scanner batch replay so the control tower can upgrade from watchlist-live to live-batch mode.",
+      href: "/api/control-tower",
+      hrefLabel: "Open control-tower API",
+      tone: "watch",
+      latency: null,
+    }, "scanner-http-404"));
+  }
+
   if (!actions.length) {
     actions.push(attachRunbook({
       id: "all-clear",
@@ -1192,9 +1653,11 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims, option
   const includeDetails = options.includeDetails !== false;
   const hospitals = BRANCHES.map(branch => enrichHospital(branch, branchHealth[branch.id]));
   const externalServices = MOH_PORTALS.map(portal => enrichExternalService(portal, externalHealth[portal.id]));
+  const platformApps = buildPlatformApps(claims);
   const priorityActions = buildPriorityActions(hospitals, externalServices, claims);
   const hospitalSummary = summarizeServices(hospitals);
   const externalSummary = summarizeServices(externalServices);
+  const platformSummary = summarizePlatformApps(platformApps);
   const allResponsive = [...hospitals, ...externalServices].filter(item => item.online);
   const integrations = buildIntegrationSnapshot(hospitals, claims, options.env || {});
 
@@ -1206,10 +1669,12 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims, option
     summary: {
       hospitals: hospitalSummary,
       externalServices: externalSummary,
+      platformApps: platformSummary,
       claims: claims.summary,
       actions: summarizeActions(priorityActions),
       overall: {
         monitoredEndpoints: hospitals.length + externalServices.length,
+        operationalSurfaces: hospitals.length + externalServices.length + platformApps.length,
         avgLatencyMs: allResponsive.length
           ? Math.round(allResponsive.reduce((sum, item) => sum + (item.latency || 0), 0) / allResponsive.length)
           : null,
@@ -1218,6 +1683,7 @@ function createControlTowerSnapshot(branchHealth, externalHealth, claims, option
     integrations,
     hospitals,
     externalServices,
+    platformApps,
     claims,
     runbooks: buildRunbookIndex(),
     priorityActions,
@@ -1323,7 +1789,7 @@ function buildIntegrationSnapshot(hospitals, claims, env) {
     },
     portals: {
       status: "healthy",
-      url: "https://portals.elfadil.com",
+      url: "https://portals.brainsait.org",
       summaryEndpoint: "/api/control-tower/summary",
       detailEndpoint: "/api/control-tower/details",
       signal: "Portals control plane is serving live snapshots.",
@@ -1462,7 +1928,7 @@ async function handleOracleDeploy(request, env, url) {
       operator,
       metadata: payload.metadata || null,
       dryRun: payload.dryRun === true,
-      source: "portals.elfadil.com/api/deploy/oracle",
+      source: "portals.brainsait.org/api/deploy/oracle",
     }),
   });
 
@@ -1488,7 +1954,7 @@ function parseAllowedOrigins(env, fallback = []) {
 }
 
 function resolveCorsOrigin(request, env) {
-  const allowed = parseAllowedOrigins(env, ["https://portals.elfadil.com"]);
+  const allowed = parseAllowedOrigins(env, ["https://portals.brainsait.org"]);
   const origin = request.headers.get("Origin");
 
   if (!origin) return allowed[0] || null;
@@ -1732,6 +2198,11 @@ export default {
     const path = url.pathname;
     const requestId = crypto.randomUUID();
 
+    if (url.hostname === "www.brainsait.org") {
+      url.hostname = "brainsait.org";
+      return Response.redirect(url.toString(), 301);
+    }
+
     // CORS preflight
     if (request.method === "OPTIONS") {
       const headers = corsHeaders(request, env, "GET, POST, OPTIONS");
@@ -1752,6 +2223,24 @@ export default {
       return new Response("ok", {
         status: 200,
         headers: { "Content-Type": "text/plain", ...SEC_HEADERS },
+      });
+    }
+
+    if (path === "/robots.txt") {
+      return new Response("User-agent: *\nAllow: /\nSitemap: https://brainsait.org/sitemap.xml\n", {
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+          "Cache-Control": "public, max-age=3600",
+        },
+      });
+    }
+
+    if (path === "/sitemap.xml") {
+      return new Response(renderSitemapXml(), {
+        headers: {
+          "Content-Type": "application/xml;charset=utf-8",
+          "Cache-Control": "public, max-age=3600",
+        },
       });
     }
 
@@ -1776,11 +2265,10 @@ export default {
       if (!runbook) {
         return new Response("Runbook not found", { status: 404 });
       }
-      return new Response(renderRunbookPage(runbook), { headers: HTML_HEADERS });
+      return htmlResponse(renderRunbookPage(runbook));
     }
 
     if (path === "/api/control-tower/summary") {
-      // Prefer KV-cached result (written by cron every 5 min) to avoid live probing on every request
       if (env.PORTAL_KV) {
         const cached = await env.PORTAL_KV.get("control-tower:summary:latest", "text");
         if (cached) {
@@ -1799,11 +2287,10 @@ export default {
         includeInternals: false,
         includeDetails: false,
       });
-      return json(summarySnapshot, 200, { "X-Cache": "MISS" });
+      return json(summarySnapshot, 200, { request, env, "X-Cache": "MISS" });
     }
 
     if (path === "/api/control-tower/details") {
-      // Prefer KV-cached result (written by cron every 5 min) to avoid live probing on every request
       if (env.PORTAL_KV) {
         const cached = await env.PORTAL_KV.get("control-tower:details:latest", "text");
         if (cached) {
@@ -1833,7 +2320,7 @@ export default {
         runbooks: detailSnapshot.runbooks,
         priorityActions: detailSnapshot.priorityActions,
         integrations: detailSnapshot.integrations,
-      }, 200, { "X-Cache": "MISS" });
+      }, 200, { request, env, "X-Cache": "MISS" });
     }
 
     if (path === "/api/integrations") {
@@ -1841,7 +2328,7 @@ export default {
         includeInternals: false,
         includeDetails: false,
       });
-      return json(integrationSnapshot.integrations);
+      return json(integrationSnapshot.integrations, 200, { request, env });
     }
 
     if (path === "/api/control-tower") {
@@ -1862,59 +2349,109 @@ export default {
       return handleOracleDeploy(request, env, url);
     }
 
-    // Proxy /api/scan/:branch → oracle-claim-scanner Worker (FIX-7)
-    if (path.startsWith("/api/scan/")) {
-      const accessDenied = await requireAccessJwt(request, env);
-      if (accessDenied) return accessDenied;
-      const denied = requireApiKey(request, env, url);
-      if (denied) return denied;
-      const branchId = path.split("/api/scan/")[1];
-      const branch = BRANCHES.find(b => b.id === branchId);
-      if (!branch) return json({ error: `Unknown branch: ${branchId}` }, 404);
-
-      const scanPath = `/scan?branch=${encodeURIComponent(branchId)}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30_000);
-
-      try {
-        const response = env.SCANNER_SERVICE
-          ? await env.SCANNER_SERVICE.fetch(`https://scanner.internal${scanPath}`, {
-              method: request.method === "POST" ? "POST" : "GET",
-              headers: { Accept: "application/json" },
-            })
-          : await fetch(
-              normalizeUrl(env.SCANNER_URL || "https://oracle-scanner.elfadil.com", scanPath),
-              {
-                method: request.method === "POST" ? "POST" : "GET",
-                headers: { Accept: "application/json" },
-                signal: controller.signal,
-              }
-            );
-
-        const body = await response.text();
-        return new Response(body, {
-          status: response.status,
-          headers: {
-            "Content-Type": response.headers.get("Content-Type") || "application/json",
-            "Access-Control-Allow-Origin": resolveCorsOrigin(request, env) || "https://portals.elfadil.com",
-            Vary: "Origin",
-            "Cache-Control": "no-store",
-          },
-        });
-      } catch (error) {
-        return json(
-          {
-            error: error.name === "AbortError" ? "timeout" : error.message,
-            branch: branchId,
-          },
-          502
-        );
-      } finally {
-        clearTimeout(timer);
-      }
+    if (path === "/api/platform-apps") {
+      const snapshot = await buildControlTowerSnapshot(env);
+      return json({
+        timestamp: snapshot.timestamp,
+        summary: snapshot.summary.platformApps,
+        apps: snapshot.platformApps,
+      }, 200, { request, env });
     }
 
-    // JSON health of all branches (public — used by COMPLIANCELINC scanner)
+    if (path.startsWith("/api/scan/")) {
+      const branchId = decodeURIComponent(path.split("/api/scan/")[1] || "");
+      const branch = BRANCHES.find(b => b.id === branchId);
+      if (!branch) {
+        return json({
+          error: `Unknown branch: ${branchId}`,
+          tone: "red",
+          message: `Branch ${branchId} is not registered in the BrainSAIT control tower.`,
+        }, 404, { request, env });
+      }
+
+      const hasAuthenticatedIntent = Boolean(
+        request.headers.get("Authorization")
+        || request.headers.get("X-API-Key")
+        || request.headers.get("x-api-key")
+        || request.headers.get("CF-Access-Jwt-Assertion")
+        || request.headers.get("cf-access-jwt-assertion")
+        || url.searchParams.get("api_key")
+        || url.searchParams.get("key")
+      );
+
+      if (hasAuthenticatedIntent) {
+        const accessDenied = await requireAccessJwt(request, env);
+        if (accessDenied) return accessDenied;
+        const denied = requireApiKey(request, env, url);
+        if (denied) return denied;
+
+        const scanPath = `/scan?branch=${encodeURIComponent(branchId)}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30_000);
+
+        try {
+          const response = env.SCANNER_SERVICE
+            ? await env.SCANNER_SERVICE.fetch(`https://scanner.internal${scanPath}`, {
+                method: request.method === "POST" ? "POST" : "GET",
+                headers: { Accept: "application/json" },
+              })
+            : await fetch(
+                normalizeUrl(env.SCANNER_URL || "https://oracle-scanner.brainsait.org", scanPath),
+                {
+                  method: request.method === "POST" ? "POST" : "GET",
+                  headers: { Accept: "application/json" },
+                  signal: controller.signal,
+                }
+              );
+
+          const body = await response.text();
+          return new Response(body, {
+            status: response.status,
+            headers: {
+              "Content-Type": response.headers.get("Content-Type") || "application/json",
+              "Access-Control-Allow-Origin": resolveCorsOrigin(request, env) || "https://portals.brainsait.org",
+              Vary: "Origin",
+              "Cache-Control": "no-store",
+            },
+          });
+        } catch (error) {
+          return json({
+            error: error.name === "AbortError" ? "timeout" : error.message,
+            branch: branchId,
+          }, 502, { request, env });
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      const health = await probeBranch(branch);
+      const portalUrl = `https://${branch.subdomain}${branch.loginPath}`;
+      const portalSignal = health.online
+        ? "The Oracle portal is reachable right now."
+        : `The Oracle portal is currently unreachable${health.error ? ` (${health.error})` : ""}.`;
+
+      return json({
+        branch: {
+          id: branch.id,
+          name: branch.name,
+          nameEn: branch.nameEn,
+          region: branch.region,
+          url: portalUrl,
+        },
+        scanReady: false,
+        tone: health.online ? "amber" : "red",
+        message: `Direct scans for ${branch.nameEn} require a national ID and bundle ID. Open the BrainSAIT Control Tower to continue. ${portalSignal}`,
+        controlTowerUrl: "https://brainsait.org/control-tower",
+        advisory: {
+          reason: "missing-claim-identifiers",
+          requiredFields: ["nationalId", "bundleId"],
+          recommendedAction: "Use the branch Oracle portal or the Control Tower watchlist, then submit the secured scan with the live claim identifiers.",
+        },
+        health,
+      }, 202, { request, env });
+    }
+
+    // JSON health of all branches
     if (path === "/api/health") {
       const rateLimited = await checkRateLimit(request, env, 20);
       if (rateLimited) return rateLimited;
@@ -1937,7 +2474,7 @@ export default {
       return json(result);
     }
 
-    // Branch config (public — used by COMPLIANCELINC scanner)
+    // Branch config (public)
     if (path === "/api/branches") {
       return json(BRANCHES.map(b => ({
         id:       b.id,
@@ -1950,22 +2487,52 @@ export default {
       })));
     }
 
-    // Dashboard (default route) — error boundary prevents Worker crash
-    try {
-      const snapshot = await buildControlTowerSnapshot(env, {
-        includeInternals: false,
-        includeDetails: true,
-      });
-      return new Response(renderDashboard(snapshot), { headers: HTML_HEADERS });
-    } catch (err) {
-      console.error("Dashboard render failed:", err.message);
-      return new Response(
-        `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unavailable</title></head>` +
-        `<body style="font-family:sans-serif;padding:2rem"><h1>Dashboard temporarily unavailable</h1>` +
-        `<p>Service error. Please retry.</p><a href="/">Retry</a></body></html>`,
-        { status: 503, headers: HTML_HEADERS }
-      );
+    if (path === "/api/infrastructure") {
+      const snapshot = await buildControlTowerSnapshot(env);
+      return json(buildInfrastructureSnapshot(snapshot), 200, { request, env });
     }
+
+    if (
+      path === "/"
+      || path === "/status"
+      || path === "/control-tower"
+      || EDGE_SERVICE_ROUTE_MAP.has(path)
+    ) {
+      try {
+        const snapshot = await buildControlTowerSnapshot(env, {
+          includeInternals: false,
+          includeDetails: true,
+        });
+
+        if (path === "/status") {
+          return htmlResponse(renderStatusPage(snapshot));
+        }
+
+        if (path === "/control-tower") {
+          return htmlResponse(renderDashboard(snapshot));
+        }
+
+        if (EDGE_SERVICE_ROUTE_MAP.has(path)) {
+          return htmlResponse(renderServiceEntryPage(EDGE_SERVICE_ROUTE_MAP.get(path), snapshot));
+        }
+
+        return htmlResponse(renderLandingPage(snapshot));
+      } catch (err) {
+        console.error("HTML render failed:", err.message);
+        const retryHref = path === "/control-tower" ? "/control-tower" : "/";
+        return htmlResponse(
+          `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unavailable</title></head>` +
+          `<body style="font-family:sans-serif;padding:2rem"><h1>Page temporarily unavailable</h1>` +
+          `<p>Service error. Please retry.</p><a href="${retryHref}">Retry</a></body></html>`,
+          503
+        );
+      }
+    }
+
+    return new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain;charset=utf-8", ...SEC_HEADERS },
+    });
   },
 
   // ── Cron: probe every 5 min, store in KV ─────────────────────────────────
@@ -2129,7 +2696,7 @@ function renderRunbookPage(runbook) {
         <span class="pill">Owner: ${runbook.owner}</span>
       </div>
       <div class="links">
-        <a class="primary" href="/">Return to control tower</a>
+        <a class="primary" href="/control-tower">Return to control tower</a>
         <a href="/api/runbooks/${runbook.id}" target="_blank" rel="noopener noreferrer">Open JSON</a>
       </div>
     </section>
@@ -2156,6 +2723,760 @@ function serializeForInlineScript(data) {
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026");
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatPercent(value) {
+  return Number.isFinite(value) ? `${Math.round(value)}%` : "—";
+}
+
+function formatLatency(value) {
+  return Number.isFinite(value) ? `${Math.round(value)} ms` : "—";
+}
+
+function formatRatio(active, total, suffix) {
+  return Number.isFinite(total) && total > 0
+    ? `${active || 0}/${total} ${suffix}`
+    : `0 ${suffix}`;
+}
+
+function normalizePath(pathname) {
+  if (!pathname || pathname === "/") return "/";
+  return pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+}
+
+function buildInfrastructureSnapshot(snapshot) {
+  return {
+    timestamp: snapshot.timestamp,
+    company: INFRASTRUCTURE_REFERENCE.company,
+    operations: INFRASTRUCTURE_REFERENCE.operations,
+    cloudflareAccountId: INFRASTRUCTURE_REFERENCE.cloudflareAccountId,
+    oid: INFRASTRUCTURE_REFERENCE.oid,
+    primaryDomain: INFRASTRUCTURE_REFERENCE.primaryDomain,
+    referenceDomains: INFRASTRUCTURE_REFERENCE.referenceDomains,
+    inventory: {
+      workers: INFRASTRUCTURE_REFERENCE.activeWorkers,
+      d1Databases: INFRASTRUCTURE_REFERENCE.d1Databases,
+      kvNamespaces: INFRASTRUCTURE_REFERENCE.kvNamespaces,
+    },
+    networkStack: INFRASTRUCTURE_REFERENCE.networkStack,
+    serviceDirectory: EDGE_SERVICE_DIRECTORY.map((service) => ({
+      aliases: service.aliases || [],
+      audience: service.audience,
+      category: service.category,
+      description: service.description,
+      features: service.features,
+      path: service.path,
+      kind: service.kind || "support",
+      slug: service.slug,
+      title: service.title,
+      host: service.host,
+    })),
+    liveSummary: snapshot.summary,
+  };
+}
+
+function renderSitemapXml() {
+  const urls = Array.from(new Set([
+    "/",
+    "/control-tower",
+    "/status",
+    "/api/infrastructure",
+    "/health",
+    "/robots.txt",
+    ...EDGE_SERVICE_DIRECTORY.flatMap((service) => [service.path, ...(service.aliases || [])]),
+    ...Object.keys(RUNBOOKS).map((id) => `/runbooks/${id}`),
+  ]));
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.map((path) => `  <url><loc>https://brainsait.org${path}</loc></url>`).join("\n")}
+</urlset>`;
+}
+
+function renderServiceEntryPage(service, snapshot) {
+  const summary = buildInfrastructureSnapshot(snapshot);
+  const primaryHref = service.launchHref || null;
+  const primaryLabel = service.launchLabel || `Open ${service.shortName}`;
+  const relatedLinks = service.relatedLinks || [];
+  const routes = [service.path, ...(service.aliases || [])];
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtmlText(service.title)} · BrainSAIT</title>
+<meta name="description" content="${escapeHtmlText(service.description)}">
+</head>
+<body style="margin:0;font-family:Inter,system-ui,sans-serif;background:#07111a;color:#edf8f6;">
+  <main style="max-width:960px;margin:0 auto;padding:32px 16px 48px;">
+    <a href="/" style="color:#52e2c6;text-decoration:none;">BrainSAIT.org</a>
+    <section style="margin-top:18px;padding:28px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.88);">
+      <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:.78rem;color:#98a8c7;">${escapeHtmlText(service.category)}</div>
+          <h1 style="margin:10px 0 12px;font-size:clamp(2rem,6vw,3.4rem);line-height:1;">${escapeHtmlText(service.title)}</h1>
+          <p style="margin:0;max-width:60ch;color:#98a8c7;line-height:1.7;">${escapeHtmlText(service.description)}</p>
+        </div>
+        <div style="padding:10px 14px;border-radius:999px;background:rgba(82,226,198,.1);border:1px solid rgba(82,226,198,.18);color:#52e2c6;">${escapeHtmlText(service.path)}</div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:22px;">
+        ${primaryHref ? `<a href="${escapeHtmlText(primaryHref)}"${primaryHref.startsWith("http") ? ` target="_blank" rel="noopener noreferrer"` : ""} style="display:inline-flex;padding:14px 18px;border-radius:16px;background:#f5c76b;color:#111827;font-weight:700;text-decoration:none;">${escapeHtmlText(primaryLabel)}</a>` : ""}
+        <a href="/status" style="display:inline-flex;padding:14px 18px;border-radius:16px;border:1px solid rgba(103,181,255,.24);background:rgba(103,181,255,.08);color:#dbe7ff;text-decoration:none;">View public status</a>
+        <a href="/control-tower" style="display:inline-flex;padding:14px 18px;border-radius:16px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);color:#edf8f6;text-decoration:none;">Open control tower</a>
+      </div>
+    </section>
+    <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:18px;">
+      <article style="padding:20px;border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);">
+        <div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">Audience</div>
+        <strong style="display:block;margin-top:8px;">${escapeHtmlText(service.audience)}</strong>
+      </article>
+      <article style="padding:20px;border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);">
+        <div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">Platform lane</div>
+        <strong style="display:block;margin-top:8px;">${escapeHtmlText(service.category)}</strong>
+      </article>
+      <article style="padding:20px;border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);">
+        <div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">Entry routes</div>
+        <strong style="display:block;margin-top:8px;">${escapeHtmlText(routes.join(" · "))}</strong>
+      </article>
+    </section>
+    ${relatedLinks.length ? `
+    <section style="margin-top:18px;padding:24px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.82);">
+      <h2 style="margin:0 0 12px;">Connected services</h2>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        ${relatedLinks.map((link) => `<a href="${escapeHtmlText(link.href)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;padding:14px 18px;border-radius:16px;border:1px solid rgba(103,181,255,.24);background:rgba(103,181,255,.08);color:#dbe7ff;text-decoration:none;">${escapeHtmlText(link.label)}</a>`).join("")}
+      </div>
+    </section>` : ""}
+    <section style="margin-top:18px;padding:24px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.82);">
+      <h2 style="margin:0 0 14px;">Service highlights</h2>
+      <ul style="margin:0;padding-left:20px;color:#98a8c7;line-height:1.8;">
+        ${service.features.map((feature) => `<li>${escapeHtmlText(feature)}</li>`).join("")}
+      </ul>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function renderStatusPage(snapshot) {
+  const infra = buildInfrastructureSnapshot(snapshot);
+  const summary = snapshot.summary || {};
+  const hospitals = summary.hospitals || {};
+  const external = summary.externalServices || {};
+  const platform = summary.platformApps || {};
+  const actions = summary.actions || {};
+
+  const cards = [
+    { label: "Hospitals online", value: formatRatio(hospitals.online, hospitals.total, "online"), detail: `${formatPercent(hospitals.availabilityPct)} availability` },
+    { label: "External services", value: formatRatio(external.online, external.total, "reachable"), detail: `Avg latency ${formatLatency(external.avgLatencyMs)}` },
+    { label: "Platform apps", value: `${platform.live || 0}/${platform.total || 0} live`, detail: `${platform.critical || 0} critical attention` },
+    { label: "Priority actions", value: `${actions.total || 0} active`, detail: `${actions.critical || 0} critical · ${actions.high || 0} high` },
+  ];
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrainSAIT Status</title>
+</head>
+<body style="margin:0;font-family:Inter,system-ui,sans-serif;background:#050816;color:#e5eefc;">
+  <main style="max-width:1120px;margin:0 auto;padding:32px 16px 56px;">
+    <a href="/" style="color:#52e2c6;text-decoration:none;">Back to brainsait.org</a>
+    <section style="margin-top:18px;padding:28px;border-radius:28px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.86);">
+      <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:.78rem;color:#52e2c6;">Public operations</div>
+          <h1 style="margin:12px 0;font-size:clamp(2rem,6vw,3.6rem);line-height:1;">BrainSAIT platform status</h1>
+          <p style="margin:0;max-width:62ch;color:#98a8c7;line-height:1.7;">This public operations view reflects the same live control-tower snapshot used by the operator dashboard, summarized for safe external visibility.</p>
+        </div>
+        <div style="padding:10px 14px;border-radius:999px;background:rgba(82,226,198,.1);border:1px solid rgba(82,226,198,.18);color:#52e2c6;">Updated ${escapeHtmlText(String(snapshot.timestamp).replace("T", " ").slice(0, 16))} UTC</div>
+      </div>
+    </section>
+    <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px;">
+      ${cards.map((card) => `<article style="padding:20px;border-radius:22px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);"><div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">${escapeHtmlText(card.label)}</div><div style="margin:10px 0 8px;font-size:1.9rem;font-weight:800;">${escapeHtmlText(card.value)}</div><div style="color:#98a8c7;">${escapeHtmlText(card.detail)}</div></article>`).join("")}
+    </section>
+    <section style="margin-top:18px;padding:24px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.82);">
+      <h2 style="margin:0 0 12px;">Infrastructure reference</h2>
+      <p style="margin:0;color:#98a8c7;line-height:1.7;">${escapeHtmlText(infra.edgeModel)}</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px;">
+        <article style="padding:18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.14);"><strong>${escapeHtmlText(String(infra.inventory.workers))}</strong><div style="color:#98a8c7;margin-top:6px;">Cloudflare Workers</div></article>
+        <article style="padding:18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.14);"><strong>${escapeHtmlText(String(infra.inventory.d1Databases))}</strong><div style="color:#98a8c7;margin-top:6px;">D1 databases</div></article>
+        <article style="padding:18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.14);"><strong>${escapeHtmlText(String(infra.inventory.kvNamespaces))}</strong><div style="color:#98a8c7;margin-top:6px;">KV namespaces</div></article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function renderLandingPage(snapshot) {
+  const renderedAt = new Date(snapshot.timestamp);
+  const summary = snapshot.summary || {};
+  const hospitalSummary = summary.hospitals || {};
+  const externalSummary = summary.externalServices || {};
+  const platformSummary = summary.platformApps || {};
+  const claimsSummary = summary.claims || {};
+  const actionSummary = summary.actions || {};
+  const overallSummary = summary.overall || {};
+
+  const escapeHtml = escapeHtmlText;
+
+  const primaryRouteCards = EDGE_SERVICE_DIRECTORY.filter((service) => service.kind === "primary").map((service) => ({
+    tone: service.tone,
+    href: service.path,
+    url: `brainsait.org${service.path}`,
+    label: service.category,
+    name: service.title,
+    description: service.description,
+    features: service.features,
+    aliases: service.aliases || [],
+  }));
+
+  const supportRouteCards = EDGE_SERVICE_DIRECTORY.filter((service) => service.kind !== "primary").map((service) => ({
+    tone: service.tone,
+    href: service.path,
+    url: `brainsait.org${service.path}`,
+    label: service.category,
+    name: service.title,
+    description: service.description,
+    features: service.features,
+  }));
+
+  const liveMetrics = [
+    {
+      label: "Hospital Network",
+      value: formatRatio(hospitalSummary.online, hospitalSummary.total, "online"),
+      detail: `${formatPercent(hospitalSummary.availabilityPct)} availability`,
+    },
+    {
+      label: "External Services",
+      value: formatRatio(externalSummary.online, externalSummary.total, "reachable"),
+      detail: `Avg latency ${formatLatency(externalSummary.avgLatencyMs)}`,
+    },
+    {
+      label: "Platform Apps",
+      value: `${platformSummary.live || 0}/${platformSummary.total || 0} live services`,
+      detail: `${platformSummary.critical || 0} critical attention`,
+    },
+    {
+      label: "Claims Engine",
+      value: `${claimsSummary.readyClaims || 0} ready`,
+      detail: `${claimsSummary.blockedClaims || 0} blocked service items`,
+    },
+    {
+      label: "Action Queue",
+      value: `${actionSummary.total || 0} active`,
+      detail: `${actionSummary.critical || 0} critical · ${actionSummary.high || 0} high`,
+    },
+    {
+      label: "Avg Latency",
+      value: formatLatency(overallSummary.avgLatencyMs),
+      detail: `${overallSummary.monitoredEndpoints || 0} monitored endpoints`,
+    },
+  ];
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>BrainSAIT eCarePlus</title>
+<meta name="description" content="BrainSAIT eCarePlus — patient-first healthcare access across BSMA, GIVC, SBS, and Saudi government exchange lanes, all connected to Oracle and Oasis+ backend operations.">
+<meta property="og:title" content="BrainSAIT eCarePlus">
+<meta property="og:description" content="Patient, provider, payer, and government healthcare interfaces connected to BrainSAIT's Oracle and Oasis+ operational backbone.">
+<meta property="og:url" content="https://brainsait.org">
+<link rel="canonical" href="https://brainsait.org">
+<style>
+  @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap");
+  :root {
+    --bg: #050816;
+    --panel: rgba(10, 17, 35, 0.82);
+    --panel-strong: rgba(11, 18, 42, 0.94);
+    --line: rgba(148, 163, 184, 0.18);
+    --text: #e5eefc;
+    --muted: #98a8c7;
+    --gold: #f5c76b;
+    --blue: #67b5ff;
+    --teal: #52e2c6;
+    --white: #dbe7ff;
+    --shadow: 0 40px 120px rgba(0, 0, 0, 0.35);
+    --radius-xl: 32px;
+    --radius-lg: 24px;
+    --radius-md: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font-family: "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(103, 181, 255, 0.20), transparent 30%),
+      radial-gradient(circle at top right, rgba(82, 226, 198, 0.16), transparent 32%),
+      linear-gradient(180deg, #040714 0%, #08101f 45%, #050816 100%);
+  }
+  a { color: inherit; text-decoration: none; }
+  .page { width: min(1200px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 60px; }
+  .nav, .hero, .metrics, .layers, .footer {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px);
+  }
+  .nav {
+    border-radius: 999px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    position: sticky;
+    top: 16px;
+    z-index: 10;
+  }
+  .nav-brand { display: flex; align-items: center; gap: 14px; }
+  .nav-logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, rgba(245, 199, 107, 0.25), rgba(82, 226, 198, 0.2));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    font-weight: 800;
+    color: var(--gold);
+  }
+  .nav-name { font-size: 1rem; font-weight: 700; }
+  .nav-sub { font-size: 0.82rem; color: var(--muted); }
+  .nav-links { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .nav-link { color: var(--muted); font-size: 0.92rem; }
+  .nav-link:hover { color: var(--text); }
+  .nav-cta {
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(245, 199, 107, 0.24), rgba(103, 181, 255, 0.16));
+    border: 1px solid rgba(245, 199, 107, 0.28);
+    font-weight: 600;
+  }
+  .hero {
+    margin-top: 22px;
+    border-radius: var(--radius-xl);
+    padding: 38px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+    gap: 28px;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(82, 226, 198, 0.22);
+    background: rgba(82, 226, 198, 0.08);
+    color: var(--teal);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .hero h1 {
+    margin: 20px 0 14px;
+    font-size: clamp(2.6rem, 7vw, 4.8rem);
+    line-height: 0.97;
+    letter-spacing: -0.04em;
+  }
+  .hero p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 1.05rem;
+    line-height: 1.7;
+    max-width: 62ch;
+  }
+  .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 28px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 170px;
+    padding: 14px 18px;
+    border-radius: 16px;
+    border: 1px solid transparent;
+    font-weight: 700;
+  }
+  .btn-primary { background: linear-gradient(135deg, #f5c76b, #ddb157); color: #111827; }
+  .btn-secondary {
+    border-color: rgba(103, 181, 255, 0.24);
+    background: rgba(103, 181, 255, 0.08);
+    color: var(--white);
+  }
+  .hero-card {
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--panel-strong);
+    padding: 24px;
+    display: grid;
+    gap: 16px;
+    align-content: start;
+  }
+  .hero-card h2 { margin: 0; font-size: 1.1rem; }
+  .hero-list { display: grid; gap: 12px; }
+  .hero-list-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .hero-list-item strong { font-size: 0.96rem; }
+  .hero-list-item span { color: var(--muted); font-size: 0.88rem; text-align: right; }
+  .status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--teal);
+    box-shadow: 0 0 0 6px rgba(82, 226, 198, 0.1);
+  }
+  .section-head {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 34px 0 18px;
+  }
+  .section-head h2 {
+    margin: 0;
+    font-size: clamp(1.6rem, 3vw, 2.4rem);
+    letter-spacing: -0.03em;
+  }
+  .section-head p { margin: 0; color: var(--muted); max-width: 54ch; }
+  .routes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .route-card {
+    min-height: 260px;
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(11, 18, 42, 0.92), rgba(8, 13, 30, 0.95));
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    transition: transform 160ms ease, border-color 160ms ease;
+  }
+  .route-card:hover { transform: translateY(-4px); border-color: rgba(255, 255, 255, 0.18); }
+  .route-card.gold { box-shadow: inset 0 0 0 1px rgba(245, 199, 107, 0.18); }
+  .route-card.blue { box-shadow: inset 0 0 0 1px rgba(103, 181, 255, 0.18); }
+  .route-card.teal { box-shadow: inset 0 0 0 1px rgba(82, 226, 198, 0.18); }
+  .route-card.white { box-shadow: inset 0 0 0 1px rgba(219, 231, 255, 0.18); }
+  .route-card .tone { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+  .route-card h3 { margin: 0; font-size: 1.5rem; }
+  .route-card p { margin: 0; color: var(--muted); line-height: 1.7; }
+  .feature-list { display: grid; gap: 10px; margin-top: auto; }
+  .feature-item { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 0.95rem; }
+  .feature-dot { width: 8px; height: 8px; border-radius: 999px; }
+  .feature-dot.gold { background: var(--gold); }
+  .feature-dot.blue { background: var(--blue); }
+  .feature-dot.teal { background: var(--teal); }
+  .feature-dot.white { background: var(--white); }
+  .card-footer {
+    margin-top: 8px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .metrics {
+    margin-top: 18px;
+    border-radius: var(--radius-xl);
+    padding: 28px;
+  }
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .metric-tile {
+    border-radius: var(--radius-md);
+    padding: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .metric-label { color: var(--muted); font-size: 0.84rem; text-transform: uppercase; letter-spacing: 0.12em; }
+  .metric-value { margin: 10px 0 8px; font-size: 1.9rem; font-weight: 800; letter-spacing: -0.04em; }
+  .metric-detail { color: var(--muted); font-size: 0.92rem; }
+  .layers {
+    margin-top: 18px;
+    border-radius: var(--radius-xl);
+    padding: 28px;
+  }
+  .layer-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .layer-card {
+    border-radius: var(--radius-md);
+    padding: 22px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .layer-card span {
+    color: var(--teal);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .layer-card h3 { margin: 12px 0 10px; font-size: 1.05rem; }
+  .layer-card p { margin: 0; color: var(--muted); line-height: 1.65; }
+  .layer-card strong {
+    display: block;
+    margin-top: 14px;
+    color: var(--white);
+    font-size: 0.92rem;
+  }
+  .footer {
+    margin-top: 18px;
+    border-radius: var(--radius-xl);
+    padding: 24px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .footer-links { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); }
+  .footer-links a:hover { color: var(--text); }
+  .footer-meta { color: var(--muted); font-size: 0.9rem; }
+  @media (max-width: 980px) {
+    .hero, .routes, .metric-grid, .layer-grid { grid-template-columns: 1fr; }
+    .nav {
+      border-radius: 24px;
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+  @media (max-width: 640px) {
+    .page { width: min(100% - 24px, 1200px); padding-bottom: 40px; }
+    .hero, .metrics, .layers, .footer { padding: 22px; }
+    .hero h1 { font-size: 2.4rem; }
+    .btn { width: 100%; }
+    .hero-actions { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <nav class="nav">
+      <div class="nav-brand">
+        <div class="nav-logo">B</div>
+        <div>
+          <div class="nav-name">BrainSAIT</div>
+          <div class="nav-sub">eCarePlus · brainsait.org</div>
+        </div>
+      </div>
+      <div class="nav-links">
+        <a href="/patient" class="nav-link">BSMA</a>
+        <a href="/givc" class="nav-link">GIVC</a>
+        <a href="/sbs" class="nav-link">SBS</a>
+        <a href="/government" class="nav-link">Government</a>
+        <a href="/api" class="nav-link">API</a>
+        <a href="/status" class="nav-link">Status</a>
+        <a href="/patient" class="nav-cta">Patient Portal →</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div>
+        <div class="eyebrow">BrainSAIT eCarePlus · Saudi Vision 2030</div>
+        <h1>Saudi Arabia's patient-first cognitive backbone for healthcare.</h1>
+        <p>
+          Four AI-native interfaces shape how patients, providers, payers, and government teams interact with Saudi healthcare.
+          BSMA leads as the patient front door, while GIVC, SBS, and the government lane stay connected through Oracle Oasis+
+          and BrainSAIT backend portals for search, retrieval, query, booking, submission, and operational coordination.
+        </p>
+        <div class="hero-actions">
+          <a href="/patient" class="btn btn-primary">Talk to BSMA (بسمة)</a>
+          <a href="/givc" class="btn btn-secondary">GIVC Provider Interface</a>
+        </div>
+        <div class="status-strip">
+          <div class="status-chip"><span class="status-dot"></span>BSMA is the main patient-facing default interface</div>
+          <div class="status-chip"><span class="status-dot"></span>Oracle and Oasis+ portals remain the shared backend spine</div>
+          <div class="status-chip"><span class="status-dot"></span>Updated ${escapeHtmlText(renderedAt.toISOString().replace("T", " ").slice(0, 16))} UTC</div>
+        </div>
+      </div>
+      <aside class="hero-card">
+        <h2>Live operational pulse</h2>
+        <div class="hero-list">
+          <div class="hero-list-item">
+            <strong>Hospitals</strong>
+            <span>${escapeHtmlText(formatRatio(hospitalSummary.online, hospitalSummary.total, "online"))}</span>
+          </div>
+          <div class="hero-list-item">
+            <strong>External services</strong>
+            <span>${escapeHtmlText(formatPercent(externalSummary.availabilityPct))} availability</span>
+          </div>
+          <div class="hero-list-item">
+            <strong>Claims queue</strong>
+            <span>${escapeHtmlText(`${claimsSummary.readyClaims || 0} ready · ${claimsSummary.blockedClaims || 0} blocked`)}</span>
+          </div>
+          <div class="hero-list-item">
+            <strong>Platform apps</strong>
+            <span>${escapeHtmlText(`${platformSummary.total || 0} tracked surfaces`)}</span>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <div class="section-head" id="platform">
+      <div>
+        <h2>One platform, four healthcare interfaces</h2>
+        <p>Every stakeholder gets a dedicated BrainSAIT lane, while the same backend portals and operational fabric keep search, retrieval, booking, and submissions synchronized.</p>
+      </div>
+    </div>
+
+    <section class="routes">
+      ${primaryRouteCards.map((card) => `
+        <a href="${escapeHtml(card.href)}" class="route-card ${escapeHtml(card.tone)}">
+          <div class="tone">${escapeHtml(card.label)}</div>
+          <h3>${escapeHtml(card.name)}</h3>
+          <p>${escapeHtml(card.description)}</p>
+          <div class="feature-list">
+            ${card.features.map((feature) => `
+              <div class="feature-item">
+                <span class="feature-dot ${escapeHtml(card.tone)}"></span>
+                <span>${escapeHtml(feature)}</span>
+              </div>
+            `).join("")}
+          </div>
+          <div class="card-footer">
+            <span>${escapeHtml(card.aliases.length ? `${card.url} · aliases ${card.aliases.join(", ")}` : card.url)}</span>
+            <span>↗</span>
+          </div>
+        </a>
+      `).join("")}
+    </section>
+
+    <div class="section-head">
+      <div>
+        <h2>Connected operational services</h2>
+        <p>The public interfaces run on top of interoperability, AI, Oracle, and status surfaces that keep the BrainSAIT network observable and connected.</p>
+      </div>
+    </div>
+
+    <section class="routes">
+      ${supportRouteCards.map((card) => `
+        <a href="${escapeHtml(card.href)}" class="route-card ${escapeHtml(card.tone)}">
+          <div class="tone">${escapeHtml(card.label)}</div>
+          <h3>${escapeHtml(card.name)}</h3>
+          <p>${escapeHtml(card.description)}</p>
+          <div class="feature-list">
+            ${card.features.map((feature) => `
+              <div class="feature-item">
+                <span class="feature-dot ${escapeHtml(card.tone)}"></span>
+                <span>${escapeHtml(feature)}</span>
+              </div>
+            `).join("")}
+          </div>
+          <div class="card-footer">
+            <span>${escapeHtml(card.url)}</span>
+            <span>↗</span>
+          </div>
+        </a>
+      `).join("")}
+    </section>
+
+    <section class="metrics" id="operations">
+      <div class="section-head" style="margin-top:0;">
+        <div>
+          <h2>Live operations snapshot</h2>
+          <p>These tiles are fed from the same live control-tower snapshot that powers the operator dashboard.</p>
+        </div>
+      </div>
+      <div class="metric-grid">
+        ${liveMetrics.map((metric) => `
+          <article class="metric-tile">
+            <div class="metric-label">${escapeHtml(metric.label)}</div>
+            <div class="metric-value">${escapeHtml(metric.value)}</div>
+            <div class="metric-detail">${escapeHtml(metric.detail)}</div>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+
+    <section class="layers" id="architecture">
+      <div class="section-head" style="margin-top:0;">
+        <div>
+          <h2>How the platform stacks together</h2>
+          <p>Operational visibility stays aligned with the same hospital systems, integrations, AI agents, and action surfaces that power the Control Tower.</p>
+        </div>
+      </div>
+      <div class="layer-grid">
+        ${CONTROL_TOWER_LAYERS.map((layer) => `
+          <article class="layer-card">
+            <span>${escapeHtml(layer.label)}</span>
+            <h3>${escapeHtml(layer.title)}</h3>
+            <p>${escapeHtml(layer.detail)}</p>
+            <strong>${escapeHtml(layer.outcome)}</strong>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-links">
+        <a href="/patient">BSMA</a>
+        <a href="/givc">GIVC</a>
+        <a href="/sbs">SBS</a>
+        <a href="/government">Government</a>
+        <a href="/api">API</a>
+        <a href="/status">Status</a>
+        <a href="/oasis">Oasis+</a>
+        <a href="/oracle">Oracle</a>
+        <a href="/control-tower">Control Tower</a>
+      </div>
+      <div class="footer-meta">OID: 1.3.6.1.4.1.61026 · brainsait.org · ${escapeHtmlText(renderedAt.toISOString().slice(0, 10))}</div>
+    </footer>
+  </div>
+</body>
+</html>`;
 }
 
 function renderDashboard(snapshot) {
@@ -2322,6 +3643,7 @@ function renderDashboard(snapshot) {
   .layer-grid,
   .hospital-grid,
   .service-grid,
+  .platform-grid,
   .agent-grid,
   .playbook-grid,
   .data-grid,
@@ -2500,6 +3822,7 @@ function renderDashboard(snapshot) {
   .integration-grid,
   .hospital-grid,
   .service-grid,
+  .platform-grid,
   .claims-grid,
   .reason-grid,
   .agent-grid,
@@ -2871,7 +4194,7 @@ function renderDashboard(snapshot) {
           <p class="eyebrow">BrainSAIT Healthcare Control Tower</p>
           <h1>Operate hospitals, NPHIES, and infrastructure as one network.</h1>
           <p>
-            This version turns portals.elfadil.com into a live command surface. Hospital probes, external healthcare services, and computed priority actions are now combined into one operational snapshot that can refresh continuously without reloading the page.
+            This version turns the BrainSAIT Control Tower into a live command surface. Hospital probes, external healthcare services, and computed priority actions are now combined into one operational snapshot that can refresh continuously without reloading the page.
           </p>
           <p>
             Search, filter, and real action queue handling now sit beside the architectural roadmap, so the portal acts like an actual control tower instead of a static gateway page.
@@ -2907,9 +4230,9 @@ function renderDashboard(snapshot) {
               <small id="statLatencyMeta">${snapshot.summary.hospitals.degraded} degraded hospitals / ${snapshot.summary.externalServices.degraded} degraded external services</small>
             </div>
             <div class="stat-card">
-              <strong id="statMonitored">${snapshot.summary.overall.monitoredEndpoints}</strong>
-              <span>Monitored endpoints</span>
-              <small id="statMonitoredMeta">${snapshot.summary.hospitals.total} hospitals + ${snapshot.summary.externalServices.total} external services</small>
+              <strong id="statMonitored">${snapshot.summary.overall.operationalSurfaces}</strong>
+              <span>Operational surfaces</span>
+              <small id="statMonitoredMeta">${snapshot.summary.hospitals.total} hospitals + ${snapshot.summary.externalServices.total} external services + ${snapshot.summary.platformApps.total} platform apps</small>
             </div>
             <div class="stat-card">
               <strong id="statActionCount">${snapshot.summary.actions.total}</strong>
@@ -3032,6 +4355,23 @@ function renderDashboard(snapshot) {
         </div>
         <div class="toolbar-status" id="scannerMeta">Loading scanner health...</div>
       </section>
+    </section>
+
+    <section class="section-shell stack fade-up delay-3" id="platform-apps">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Platform apps</p>
+          <h2>Integrated services, pipelines, and operator workflows</h2>
+        </div>
+        <p>The rest of the platform is now surfaced explicitly. Live services stay live, embedded workflows are marked as derived readiness, and every app shows how it contributes to the operating model.</p>
+      </div>
+      <div class="claims-grid" id="platformSummaryGrid">
+        <div class="empty-state">Loading platform app posture...</div>
+      </div>
+      <div class="toolbar-status" id="platformMeta">Loading platform app readiness...</div>
+      <div class="platform-grid" id="platformAppsGrid">
+        <div class="empty-state">Loading platform apps...</div>
+      </div>
     </section>
 
     <section class="detail-grid stack fade-up delay-3">
@@ -3166,7 +4506,7 @@ function renderDashboard(snapshot) {
     <div class="footer-bar fade-up delay-4">
       <span>Live probe time: ${renderedAt.toUTCString()}</span>
       <span><a href="/api/branches" target="_blank" rel="noopener noreferrer">Branch config API</a> · <a href="/api/health" target="_blank" rel="noopener noreferrer">Health JSON</a> · <a href="/api/control-tower/summary" target="_blank" rel="noopener noreferrer">Summary JSON</a> · <a href="/api/control-tower/details" target="_blank" rel="noopener noreferrer">Details JSON</a></span>
-      <span>BrainSAIT COMPLIANCELINC · portals.elfadil.com · ${renderedAt.toISOString().slice(0, 10)}</span>
+      <span>BrainSAIT COMPLIANCELINC · brainsait.org/control-tower · ${renderedAt.toISOString().slice(0, 10)}</span>
     </div>
   </main>
 
@@ -3193,11 +4533,14 @@ function renderDashboard(snapshot) {
         refs.filterButtons = Array.from(document.querySelectorAll("[data-filter]"));
         refs.hospitalGrid = document.getElementById("hospitalGrid");
         refs.externalGrid = document.getElementById("externalGrid");
+        refs.platformSummaryGrid = document.getElementById("platformSummaryGrid");
+        refs.platformAppsGrid = document.getElementById("platformAppsGrid");
         refs.actionQueue = document.getElementById("actionQueue");
         refs.claimsSummaryGrid = document.getElementById("claimsSummaryGrid");
         refs.rejectionReasonGrid = document.getElementById("rejectionReasonGrid");
         refs.paymentSummaryGrid = document.getElementById("paymentSummaryGrid");
         refs.scannerMeta = document.getElementById("scannerMeta");
+        refs.platformMeta = document.getElementById("platformMeta");
         refs.filterSummary = document.getElementById("filterSummary");
         refs.actionQueueMeta = document.getElementById("actionQueueMeta");
         refs.externalServiceMeta = document.getElementById("externalServiceMeta");
@@ -3262,7 +4605,7 @@ function renderDashboard(snapshot) {
         });
 
         refs.copyHealthCurl.addEventListener("click", async () => {
-          const cmd = "curl -fsSL https://portals.elfadil.com/api/health && curl -fsSL https://portals.elfadil.com/api/control-tower/summary";
+          const cmd = "curl -fsSL https://portals.brainsait.org/api/health && curl -fsSL https://portals.brainsait.org/api/control-tower/summary";
           try {
             await navigator.clipboard.writeText(cmd);
             setIntegrationStatus("Health curl command copied to clipboard.", false);
@@ -3383,6 +4726,34 @@ function renderDashboard(snapshot) {
         ].join('');
       }
 
+      function renderPlatformAppCard(app) {
+        return [
+          '<article class="service-card tone-', escapeHtml(app.tone), '">',
+            '<div class="service-top">',
+              '<div>',
+                '<p class="eyebrow">', escapeHtml(app.category), '</p>',
+                '<h3>', escapeHtml(app.name), '</h3>',
+              '</div>',
+              '<span class="status-chip ', escapeHtml(app.tone), '">', escapeHtml(app.healthLabel), '</span>',
+            '</div>',
+            '<p>', escapeHtml(app.description), '</p>',
+            '<p>', escapeHtml(app.signal), '</p>',
+            '<div class="service-metrics">',
+              '<div><span class="metric-label">', escapeHtml(app.metricPrimary.label), '</span><strong>', escapeHtml(app.metricPrimary.value), '</strong></div>',
+              '<div><span class="metric-label">', escapeHtml(app.metricSecondary.label), '</span><strong>', escapeHtml(app.metricSecondary.value), '</strong></div>',
+            '</div>',
+            '<div class="service-meta">',
+              '<span class="provider-pill">', escapeHtml(app.sourceType), '</span>',
+              '<span>', escapeHtml(app.automationLabel), '</span>',
+              '<span>', escapeHtml(app.sourceDetail), '</span>',
+            '</div>',
+            app.href
+              ? '<a href="' + escapeHtml(app.href) + '" target="_blank" rel="noopener noreferrer" class="secondary-link">' + escapeHtml(app.hrefLabel) + '</a>'
+              : '<span class="secondary-link disabled-link">' + escapeHtml(app.hrefLabel) + '</span>',
+          '</article>'
+        ].join('');
+      }
+
       function renderClaimsSummaryCard(title, value, detail, note) {
         return [
           '<article class="stat-card">',
@@ -3427,7 +4798,7 @@ function renderDashboard(snapshot) {
             status: i.portals?.status || "healthy",
             signal: i.portals?.signal || "Control plane status unavailable.",
             meta: i.portals?.summaryEndpoint || "/api/control-tower/summary",
-            link: i.portals?.url || "https://portals.elfadil.com",
+            link: i.portals?.url || "https://portals.brainsait.org",
             linkLabel: "Open portals frontend",
           },
           {
@@ -3517,8 +4888,8 @@ function renderDashboard(snapshot) {
         refs.statAvailabilityMeta.textContent = summary.hospitals.online + " online / " + summary.hospitals.offline + " offline";
         refs.statAvgLatency.textContent = summary.overall.avgLatencyMs ? summary.overall.avgLatencyMs + " ms" : "N/A";
         refs.statLatencyMeta.textContent = summary.hospitals.degraded + " degraded hospitals / " + summary.externalServices.degraded + " degraded external services";
-        refs.statMonitored.textContent = summary.overall.monitoredEndpoints;
-        refs.statMonitoredMeta.textContent = summary.hospitals.total + " hospitals + " + summary.externalServices.total + " external services";
+        refs.statMonitored.textContent = summary.overall.operationalSurfaces;
+        refs.statMonitoredMeta.textContent = summary.hospitals.total + " hospitals + " + summary.externalServices.total + " external services + " + summary.platformApps.total + " platform apps";
         refs.statActionCount.textContent = summary.actions.total;
         refs.statActionMeta.textContent = summary.actions.critical + " critical / " + summary.actions.high + " high";
         refs.visibleActionCount.textContent = summary.actions.total;
@@ -3569,6 +4940,26 @@ function renderDashboard(snapshot) {
         refs.rejectionReasonGrid.innerHTML = claims.rejections.topReasons.length
           ? claims.rejections.topReasons.map(renderReasonCard).join("")
           : '<div class="empty-state">No rejection reasons available.</div>';
+      }
+
+      function renderPlatformApps() {
+        const summary = state.snapshot.summary.platformApps;
+        refs.platformSummaryGrid.innerHTML = [
+          renderClaimsSummaryCard("Platform apps surfaced", String(summary.total), summary.live + " live services and " + summary.embedded + " embedded workflows", "Operational surfaces now include the rest of the platform stack."),
+          renderClaimsSummaryCard("Stable app lanes", String(summary.stable), summary.watch + " watch and " + summary.critical + " critical", "Use the app posture to decide which lane needs engineering focus next."),
+          renderClaimsSummaryCard("Live services", String(summary.live), "Services with direct runtime signal", "Oracle Claim Scanner currently anchors the live platform-service layer."),
+          renderClaimsSummaryCard("Embedded automations", String(summary.embedded), "Pipelines and operator workflows", "These remain first-class platform apps even when they are embedded rather than publicly hosted."),
+        ].join("");
+
+        refs.platformMeta.textContent = summary.critical
+          ? summary.critical + " platform apps are in critical state and " + summary.watch + " are under watch."
+          : summary.watch
+            ? summary.watch + " platform apps are under watch while the rest are ready."
+            : "All platform apps are currently ready for the next operational cycle.";
+
+        refs.platformAppsGrid.innerHTML = state.snapshot.platformApps.length
+          ? state.snapshot.platformApps.map(renderPlatformAppCard).join("")
+          : '<div class="empty-state">No platform apps are configured.</div>';
       }
 
       function renderActionQueue() {
@@ -3668,6 +5059,7 @@ function renderDashboard(snapshot) {
         renderHospitals();
         renderExternalServices();
         renderClaims();
+        renderPlatformApps();
         renderActionQueue();
         renderIntegrations();
         updateFilterButtons();
@@ -3691,23 +5083,24 @@ const SEC_HEADERS = {
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-  "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+  "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
+  "Cross-Origin-Opener-Policy": "same-origin",
 };
 
 // ── HTML Content-Security-Policy (dashboard pages) ───────────────────────────
 const HTML_CSP = [
   "default-src 'self'",
-  "script-src 'unsafe-inline'",               // inline <script> blocks only
+  "script-src 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
-  "img-src 'self' data:",
-  "connect-src 'self'",
+  "img-src 'self' data: https:",
+  "connect-src 'self' https:",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
+  "upgrade-insecure-requests",
 ].join("; ");
 
-// Extra headers added to rendered HTML responses
 const HTML_HEADERS = {
   "Content-Type": "text/html;charset=utf-8",
   "Cache-Control": "no-store",
@@ -3715,19 +5108,28 @@ const HTML_HEADERS = {
   ...SEC_HEADERS,
 };
 
+function htmlResponse(markup, status = 200) {
+  return new Response(markup, {
+    status,
+    headers: HTML_HEADERS,
+  });
+}
+
 function json(data, status = 200, extraOrContext = {}) {
   const hasRequestContext = !!(extraOrContext && extraOrContext.request && extraOrContext.env);
   const origin = hasRequestContext
     ? resolveCorsOrigin(extraOrContext.request, extraOrContext.env)
-    : "https://portals.elfadil.com";
+    : "https://portals.brainsait.org";
 
   const extraHeaders = hasRequestContext
     ? {}
-    : (extraOrContext || {});
+      : (extraOrContext || {});
 
   const headers = {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+    "X-Robots-Tag": "noindex, nofollow",
     ...SEC_HEADERS,
     Vary: "Origin",
   };
