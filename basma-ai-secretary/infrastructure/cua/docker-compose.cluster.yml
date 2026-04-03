@@ -1,0 +1,75 @@
+version: '3.9'
+
+services:
+  cua-medical-coding:
+    image: kasmweb/chrome:1.16.0
+    container_name: cua-medical-coding
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      - VNC_PW=${CUA_VNC_PASSWORD:-brainsait-medical}
+      - TITLE=Medical Coding Desktop
+      - START_URL=${MEDICAL_CODING_START_URL:-https://nphies.sa/}
+      - LAUNCH_URL=${MEDICAL_CODING_EHR_URL:-https://ehr.example.local/}
+      - DESKTOP_PROFILE=medical_coding
+      - MAX_CPU=4
+      - MAX_RAM=6144
+    ports:
+      - "6901:6901"
+      - "3901:3000"
+    volumes:
+      - ./profiles/medical-coding:/home/kasm-user
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cua
+
+  cua-research-intelligence:
+    image: kasmweb/firefox:1.16.0
+    container_name: cua-research-intelligence
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      - VNC_PW=${CUA_VNC_PASSWORD:-brainsait-research}
+      - TITLE=Research Intelligence Desktop
+      - START_URL=${RESEARCH_START_URL:-https://pubmed.ncbi.nlm.nih.gov/}
+      - LAUNCH_URL=${RESEARCH_PDF_ANALYZER_URL:-https://pdf.brainsait.org/}
+      - DESKTOP_PROFILE=research_intelligence
+      - MAX_CPU=4
+      - MAX_RAM=6144
+    ports:
+      - "6902:6901"
+      - "3902:3000"
+    volumes:
+      - ./profiles/research-intelligence:/home/kasm-user
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cua
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.3.1
+    container_name: cua-cloudflared
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    depends_on:
+      cua-medical-coding:
+        condition: service_healthy
+      cua-research-intelligence:
+        condition: service_healthy
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+    networks:
+      - cua
+
+networks:
+  cua:
+    driver: bridge

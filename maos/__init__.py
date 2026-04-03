@@ -16,7 +16,7 @@ from .agent_router import AgentRouter
 from .task_engine import TaskEngine
 from .memory_layer import MemoryLayer
 
-__version__ = "1.0.0"
+__version__ = "5.0.0"
 __all__ = [
     "MAOSOrchestrator",
     "AgentRegistry",

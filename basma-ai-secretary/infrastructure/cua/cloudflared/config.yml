@@ -1,0 +1,13 @@
+tunnel: cua-desktops
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: medical-coding-desktop.brainsait.org
+    service: http://cua-medical-coding:6901
+  - hostname: research-desktop.brainsait.org
+    service: http://cua-research-intelligence:6901
+  - hostname: medical-coding-browser.brainsait.org
+    service: http://cua-medical-coding:3000
+  - hostname: research-browser.brainsait.org
+    service: http://cua-research-intelligence:3000
+  - service: http_status:404

@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from packages.fhir import build_message_bundle, build_nphies_message_header, validate_bundle_entries
+
 logger = logging.getLogger("scenarios.hospital_simulation")
 
 
@@ -232,39 +234,66 @@ class HospitalSimulation:
     """
 
     async def run(
-        self, scenario_id: Optional[str] = None, custom_patient: Optional[Dict] = None
+        self,
+        scenario_id: Optional[str] = None,
+        custom_patient: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Execute a full simulation run."""
+        """Execute a full simulation run with iterative patient-doctor loops."""
         started = datetime.now(timezone.utc)
 
         # 1. Generate or use patient
         patient = custom_patient or VirtualPatient.generate(scenario_id)
+        max_cycles = int(patient.get("loop_cycles", 3))
 
-        # 2. Nurse triage
-        triage = self._nurse_triage(patient)
+        loop_trace: List[Dict[str, Any]] = []
+        triage: Dict[str, Any] = {}
+        doctor: Dict[str, Any] = {}
+        lab: Dict[str, Any] = {}
+        risk: Dict[str, Any] = {}
+        treatment: Dict[str, Any] = {}
+        radiology: Optional[Dict[str, Any]] = None
 
-        # 3. Doctor assessment
-        doctor = VirtualDoctor.assess(patient, triage)
+        for cycle in range(1, max_cycles + 1):
+            triage = self._nurse_triage(patient)
+            doctor = VirtualDoctor.assess(patient, triage)
+            lab = VirtualLab.process_orders(doctor.get("orders", []), patient)
 
-        # 4. Lab processing
-        lab = VirtualLab.process_orders(doctor.get("orders", []), patient)
+            imaging_orders = [
+                o for o in doctor.get("orders", [])
+                if o in ["chest_xray", "ct_chest", "ecg"]
+            ]
+            if imaging_orders:
+                radiology = VirtualRadiology.read_study(imaging_orders[0], patient)
 
-        # 5. Radiology (if ordered)
-        radiology = None
-        imaging_orders = [o for o in doctor.get("orders", []) if o in ["chest_xray", "ct_chest", "ecg"]]
-        if imaging_orders:
-            radiology = VirtualRadiology.read_study(imaging_orders[0], patient)
+            risk = self._risk_analysis(patient, triage, doctor, lab)
+            treatment = self._generate_treatment_plan(doctor, lab, risk)
+
+            loop_trace.append(
+                {
+                    "cycle": cycle,
+                    "triage": triage,
+                    "doctor": doctor,
+                    "lab": lab,
+                    "risk": risk,
+                    "treatment": treatment,
+                    "radiology": radiology,
+                }
+            )
+
+            if risk.get("risk_level") != "critical":
+                break
+
+            patient = self._apply_intervention_effects(patient, treatment)
 
         # 6. Insurance check
         insurance = VirtualInsurance.check_eligibility(
             patient.get("id", "SIM-001"), "99285"
         )
 
-        # 7. Risk analysis
-        risk = self._risk_analysis(patient, triage, doctor, lab)
-
-        # 8. Treatment plan
-        treatment = self._generate_treatment_plan(doctor, lab, risk)
+        # 8. Build simulated NPHIES/FHIR worker outputs.
+        fhir_bundle = self._build_fhir_claim_bundle(patient, doctor, insurance)
+        validation_reports = validate_bundle_entries(fhir_bundle)
+        worker_results = self._build_validation_worker_output(validation_reports)
 
         completed = datetime.now(timezone.utc)
 
@@ -273,6 +302,7 @@ class HospitalSimulation:
             "scenario": patient.get("id", "custom"),
             "status": "completed",
             "duration_ms": (completed - started).total_seconds() * 1000,
+            "loops_executed": len(loop_trace),
             "pipeline": {
                 "patient_presentation": patient,
                 "nurse_triage": triage,
@@ -281,6 +311,8 @@ class HospitalSimulation:
                 "radiology": radiology,
                 "insurance": insurance,
                 "risk_analysis": risk,
+                "loop_trace": loop_trace,
+                "validation_workers": worker_results,
             },
             "outcome": {
                 "diagnosis": doctor.get("primary_suspicion"),
@@ -288,6 +320,8 @@ class HospitalSimulation:
                 "treatment_plan": treatment,
                 "risk_alerts": risk.get("alerts", []),
                 "evidence_sources": risk.get("evidence", []),
+                "fhir_nphies_ready": worker_results.get("safe_to_submit", False),
+                "validation_errors": worker_results.get("errors", []),
             },
             "meta": {
                 "platform": "BrainSAIT eCarePlus",
@@ -295,6 +329,128 @@ class HospitalSimulation:
                 "agents_involved": 6,
                 "started_at": started.isoformat(),
                 "completed_at": completed.isoformat(),
+            },
+        }
+
+    def _apply_intervention_effects(
+        self, patient: Dict[str, Any], treatment: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Apply simplified intervention effects between simulation loops."""
+        updated = {**patient}
+        vitals = {**patient.get("vitals", {})}
+
+        if vitals.get("hr", 80) > 90:
+            vitals["hr"] = max(80, vitals["hr"] - 8)
+        if vitals.get("spo2", 96) < 96:
+            vitals["spo2"] = min(99, vitals["spo2"] + 2)
+        if vitals.get("temp", 37.0) > 38.0:
+            vitals["temp"] = max(37.2, round(vitals["temp"] - 0.4, 1))
+
+        updated["vitals"] = vitals
+        updated["severity"] = "high" if patient.get("severity") == "critical" else "medium"
+        updated["intervention_note"] = (
+            f"Applied {len(treatment.get('medications', []))} medication orders"
+        )
+        return updated
+
+    def _build_fhir_claim_bundle(
+        self,
+        patient: Dict[str, Any],
+        doctor: Dict[str, Any],
+        insurance: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Create a minimal message bundle consumable by FHIR/NPHIES validators."""
+        patient_id = patient.get("id", "SIM-001")
+        claim_id = f"CLM-{patient_id}"
+
+        patient_resource = {
+            "resourceType": "Patient",
+            "id": patient_id,
+            "identifier": [{"system": "http://nphies.sa/identifier/iqama", "value": "2538864592"}],
+            "name": [{"text": "Simulated Patient"}],
+            "gender": "male",
+            "birthDate": "1970-01-01",
+            "extension": [
+                {
+                    "url": "http://nphies.sa/fhir/ksa/nphies-fs/StructureDefinition/extension-nationality",
+                    "valueCodeableConcept": {
+                        "coding": [
+                            {
+                                "system": "http://nphies.sa/terminology/CodeSystem/ksa-nationality",
+                                "code": "SA",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "url": "http://nphies.sa/fhir/ksa/nphies-fs/StructureDefinition/extension-occupation",
+                    "valueCodeableConcept": {
+                        "coding": [
+                            {
+                                "system": "http://nphies.sa/terminology/CodeSystem/occupation",
+                                "code": "employee",
+                            }
+                        ]
+                    },
+                },
+            ],
+        }
+
+        claim_resource = {
+            "resourceType": "Claim",
+            "id": claim_id,
+            "status": "active",
+            "type": {"coding": [{"system": "http://nphies.sa/terminology/CodeSystem/claim-type", "code": "institutional"}]},
+            "use": "claim",
+            "patient": {"reference": f"Patient/{patient_id}"},
+            "created": datetime.now(timezone.utc).date().isoformat(),
+            "insurer": {"reference": "Organization/PAYER-001"},
+            "provider": {"reference": "Organization/PROVIDER-001"},
+            "priority": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/processpriority", "code": "normal"}]},
+            "insurance": [{"sequence": 1, "focal": True, "coverage": {"reference": "Coverage/COV-001"}}],
+            "item": [{"sequence": 1, "productOrService": {"coding": [{"system": "http://nphies.sa/terminology/CodeSystem/sbs", "code": "B00113"}]}}],
+            "extension": [
+                {
+                    "url": "http://nphies.sa/fhir/ksa/nphies-fs/StructureDefinition/extension-episode",
+                    "valueString": "simulated-episode",
+                },
+                {
+                    "url": "http://nphies.sa/fhir/ksa/nphies-fs/StructureDefinition/extension-patientShare",
+                    "valueMoney": {"value": 20, "currency": "SAR"},
+                },
+            ],
+        }
+
+        header = build_nphies_message_header(
+            event_code="claim-request",
+            sender_org_id="PROVIDER-001",
+            receiver_org_id="PAYER-001",
+            focus_references=[f"Claim/{claim_id}"],
+        )
+        return build_message_bundle(header, [patient_resource, claim_resource])
+
+    def _build_validation_worker_output(
+        self, validation_reports: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Return worker-friendly FHIR/NPHIES validation output."""
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        for report in validation_reports:
+            for missing in report.get("missing_required", []):
+                errors.append(f"{report.get('resource_type')}: missing {missing}")
+            for violation in report.get("cardinality_violations", []):
+                errors.append(f"{report.get('resource_type')}: {violation}")
+            warnings.extend(report.get("nphies_warnings", []))
+
+        return {
+            "safe_to_submit": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "entry_reports": validation_reports,
+            "workers": {
+                "fhir_validator": "completed",
+                "nphies_rule_engine": "completed",
             },
         }
 

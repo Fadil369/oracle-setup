@@ -5,10 +5,24 @@ NPHIES specifications, research papers, and BrainSAIT docs.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("knowledge.vector_client")
+
+try:
+    from qdrant_client import QdrantClient  # type: ignore
+    from qdrant_client.http import models as qdrant_models  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    QdrantClient = None
+    qdrant_models = None
+
+try:
+    import chromadb  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    chromadb = None
 
 
 class VectorClient:
@@ -22,9 +36,26 @@ class VectorClient:
         self.config = config or {}
         self._store: Dict[str, Dict[str, Any]] = {}
         self._collections: Dict[str, List[Dict[str, Any]]] = {}
+        self._qdrant_client = None
+        self._chroma_client = None
 
     async def connect(self):
         """Connect to the vector database."""
+        if self.backend == "qdrant":
+            if QdrantClient is None:
+                raise RuntimeError("qdrant_client is not installed")
+
+            url = self.config.get("url") or os.environ.get("QDRANT_URL", "http://localhost:6333")
+            api_key = self.config.get("api_key") or os.environ.get("QDRANT_API_KEY")
+            self._qdrant_client = QdrantClient(url=url, api_key=api_key)
+
+        elif self.backend == "chroma":
+            if chromadb is None:
+                raise RuntimeError("chromadb is not installed")
+
+            persist_dir = self.config.get("persist_dir") or os.environ.get("CHROMA_PERSIST_DIR", ".chroma")
+            self._chroma_client = chromadb.PersistentClient(path=persist_dir)
+
         logger.info("Vector client connected (%s)", self.backend)
 
     async def disconnect(self):
@@ -33,6 +64,21 @@ class VectorClient:
 
     async def create_collection(self, name: str, dimension: int = 1536):
         """Create a vector collection."""
+        if self.backend == "qdrant":
+            if not self._qdrant_client:
+                raise RuntimeError("Qdrant client not connected")
+            self._qdrant_client.recreate_collection(
+                collection_name=name,
+                vectors_config=qdrant_models.VectorParams(size=dimension, distance=qdrant_models.Distance.COSINE),
+            )
+            return
+
+        if self.backend == "chroma":
+            if not self._chroma_client:
+                raise RuntimeError("Chroma client not connected")
+            self._chroma_client.get_or_create_collection(name=name)
+            return
+
         self._collections[name] = []
         logger.info("Created collection: %s (dim=%d)", name, dimension)
 
@@ -45,6 +91,39 @@ class VectorClient:
         metadata: Optional[Dict[str, Any]] = None,
     ):
         """Insert or update a document with its embedding."""
+        if self.backend == "qdrant":
+            if not self._qdrant_client:
+                raise RuntimeError("Qdrant client not connected")
+
+            point_id = abs(hash(doc_id)) % (10**12)
+            self._qdrant_client.upsert(
+                collection_name=collection,
+                points=[
+                    qdrant_models.PointStruct(
+                        id=point_id,
+                        vector=embedding or [],
+                        payload={
+                            "id": doc_id,
+                            "text": text,
+                            **(metadata or {}),
+                        },
+                    )
+                ],
+            )
+            return
+
+        if self.backend == "chroma":
+            if not self._chroma_client:
+                raise RuntimeError("Chroma client not connected")
+            collection_obj = self._chroma_client.get_or_create_collection(name=collection)
+            collection_obj.upsert(
+                ids=[doc_id],
+                documents=[text],
+                metadatas=[metadata or {}],
+                embeddings=[embedding or []],
+            )
+            return
+
         if collection not in self._collections:
             self._collections[collection] = []
 
@@ -72,6 +151,65 @@ class VectorClient:
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Search for similar documents."""
+        if self.backend == "qdrant":
+            if not self._qdrant_client:
+                raise RuntimeError("Qdrant client not connected")
+
+            if query_embedding:
+                hits = self._qdrant_client.search(
+                    collection_name=collection,
+                    query_vector=query_embedding,
+                    limit=top_k,
+                )
+                return [
+                    {
+                        "id": h.payload.get("id", str(h.id)),
+                        "text": h.payload.get("text", ""),
+                        "metadata": {k: v for k, v in h.payload.items() if k not in {"id", "text"}},
+                        "score": float(h.score),
+                    }
+                    for h in hits
+                ]
+
+            # Fallback text search on payload text via scroll.
+            points, _ = self._qdrant_client.scroll(collection_name=collection, limit=200)
+            matches = []
+            for point in points:
+                text = str(point.payload.get("text", ""))
+                if query_text.lower() in text.lower():
+                    matches.append(
+                        {
+                            "id": point.payload.get("id", str(point.id)),
+                            "text": text,
+                            "metadata": {k: v for k, v in point.payload.items() if k not in {"id", "text"}},
+                            "score": 1.0,
+                        }
+                    )
+            return matches[:top_k]
+
+        if self.backend == "chroma":
+            if not self._chroma_client:
+                raise RuntimeError("Chroma client not connected")
+            collection_obj = self._chroma_client.get_or_create_collection(name=collection)
+            if query_embedding:
+                result = collection_obj.query(query_embeddings=[query_embedding], n_results=top_k)
+            else:
+                result = collection_obj.query(query_texts=[query_text], n_results=top_k)
+
+            documents = result.get("documents", [[]])[0]
+            metadatas = result.get("metadatas", [[]])[0]
+            ids = result.get("ids", [[]])[0]
+            distances = result.get("distances", [[]])[0]
+            return [
+                {
+                    "id": ids[i],
+                    "text": documents[i],
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                    "score": 1.0 - float(distances[i]) if i < len(distances) else 0.5,
+                }
+                for i in range(len(ids))
+            ]
+
         docs = self._collections.get(collection, [])
 
         # Simple text matching for in-memory backend
@@ -91,6 +229,31 @@ class VectorClient:
 
     async def delete(self, collection: str, doc_id: str):
         """Delete a document from a collection."""
+        if self.backend == "qdrant":
+            if not self._qdrant_client:
+                raise RuntimeError("Qdrant client not connected")
+            self._qdrant_client.delete(
+                collection_name=collection,
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="id",
+                                match=qdrant_models.MatchValue(value=doc_id),
+                            )
+                        ]
+                    )
+                ),
+            )
+            return
+
+        if self.backend == "chroma":
+            if not self._chroma_client:
+                raise RuntimeError("Chroma client not connected")
+            collection_obj = self._chroma_client.get_or_create_collection(name=collection)
+            collection_obj.delete(ids=[doc_id])
+            return
+
         if collection in self._collections:
             self._collections[collection] = [
                 d for d in self._collections[collection] if d["id"] != doc_id
@@ -234,3 +397,64 @@ class KnowledgeSystem:
             {"key": k, **{kk: vv for kk, vv in v.items() if kk != "collection"}}
             for k, v in self.SOURCES.items()
         ]
+
+
+class KnowledgeIndexer:
+    """Indexes source corpora into the knowledge system for Linc retrieval."""
+
+    def __init__(self, system: KnowledgeSystem):
+        self.system = system
+
+    async def index_paths(
+        self,
+        source: str,
+        paths: List[str],
+        chunk_size: int = 1600,
+        chunk_overlap: int = 200,
+    ) -> Dict[str, Any]:
+        indexed = 0
+        failures: List[str] = []
+
+        for raw_path in paths:
+            path = Path(raw_path)
+            if not path.exists() or not path.is_file():
+                failures.append(f"missing:{raw_path}")
+                continue
+
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+                chunks = self._chunk_text(content, chunk_size, chunk_overlap)
+                for idx, chunk in enumerate(chunks):
+                    await self.system.index_document(
+                        source=source,
+                        doc_id=f"{path.name}:{idx}",
+                        text=chunk,
+                        metadata={
+                            "path": str(path),
+                            "chunk": idx,
+                            "source": source,
+                        },
+                    )
+                    indexed += 1
+            except Exception as ex:  # pragma: no cover - resilient indexing
+                failures.append(f"{raw_path}:{ex}")
+
+        return {
+            "source": source,
+            "indexed_chunks": indexed,
+            "failures": failures,
+        }
+
+    def _chunk_text(self, text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
+        if len(text) <= chunk_size:
+            return [text]
+
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+            chunks.append(text[start:end])
+            if end >= len(text):
+                break
+            start = max(0, end - chunk_overlap)
+        return chunks

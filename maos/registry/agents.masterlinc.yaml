@@ -1,0 +1,186 @@
+version: 1
+registry: brainsait-masterlinc
+agents:
+  - name: DoctorLinc
+    aliases: [doctor_agent, openmaic_doctor]
+    legacy_roles: [openmaic_doctor, clinical]
+    role: Clinical decision support specialist
+    description: Senior physician Linc for diagnosis, treatment planning, and safety checks.
+    model: gpt-4o
+    temperature: 0.2
+    tools:
+      - medical_db
+      - symptom_checker
+      - drug_interaction_checker
+      - lab_interpreter
+      - fhir_patient_reader
+    memory: patient_context
+    capabilities:
+      - clinical_assessment
+      - diagnosis
+      - treatment_planning
+      - medication_review
+      - hospital_digital_twin
+    team_roles:
+      - doctorlinc
+      - clinical
+      - consultant
+    priority: 1
+    enabled: true
+    domain: clinical
+
+  - name: NurseLinc
+    aliases: [nurse_agent, openmaic_nurse]
+    legacy_roles: [openmaic_nurse, nursing]
+    role: Clinical triage and care coordinator
+    description: Triage and patient-care Linc for virtual and production workflows.
+    model: gpt-4o
+    temperature: 0.3
+    tools:
+      - vital_signs_analyzer
+      - triage_protocol
+      - care_plan_builder
+      - patient_communicator
+    memory: patient_context
+    capabilities:
+      - triage
+      - care_coordination
+      - hospital_digital_twin
+    team_roles:
+      - nurselinc
+      - nursing
+      - patient_sim
+    priority: 1
+    enabled: true
+    domain: clinical
+
+  - name: ClaimLinc
+    aliases: [claims_agent, openmaic_claims]
+    legacy_roles: [openmaic_claims, claims]
+    role: Claims processing and revenue recovery
+    description: NPHIES claim analysis, rejection intelligence, and appeal execution.
+    model: gpt-4o
+    temperature: 0.2
+    tools:
+      - nphies_gateway
+      - claims_scanner
+      - oracle_bridge
+      - rejection_analyzer
+      - appeal_generator
+      - sbs_validator
+    memory: claims_context
+    capabilities:
+      - claims_processing
+      - rejection_analysis
+      - appeal_preparation
+      - hospital_digital_twin
+    team_roles:
+      - claimlinc
+      - claims
+      - coding
+    priority: 1
+    enabled: true
+    domain: revenue
+
+  - name: ComplianceLinc
+    aliases: [compliance_agent, openmaic_compliance]
+    legacy_roles: [openmaic_compliance, compliance]
+    role: Regulatory and standards enforcement
+    description: HIPAA/PDPL/NPHIES/FHIR validation with remediation guidance.
+    model: gpt-4o
+    temperature: 0.1
+    tools:
+      - compliance_checker
+      - audit_trail_monitor
+      - fhir_validator
+      - pdpl_scanner
+      - nphies_rule_engine
+    memory: compliance_context
+    capabilities:
+      - compliance_audit
+      - fhir_validation
+      - nphies_compliance
+      - hospital_digital_twin
+    team_roles:
+      - compliancelinc
+      - compliance
+    priority: 1
+    enabled: true
+    domain: governance
+
+  - name: KnowledgeLinc
+    aliases: [knowledge_agent, openmaic_knowledge]
+    legacy_roles: [openmaic_knowledge, knowledge]
+    role: Knowledge retrieval and vector intelligence
+    description: Indexes and retrieves FHIR/NPHIES/internal docs for all Linc agents.
+    model: gpt-4o
+    temperature: 0.3
+    tools:
+      - vector_search
+      - document_parser
+      - embedding_service
+      - fhir_docs_reader
+      - nphies_spec_reader
+    memory: knowledge_base
+    capabilities:
+      - knowledge_retrieval
+      - document_analysis
+      - semantic_search
+      - vector_indexing
+    team_roles:
+      - knowledgelinc
+      - knowledge
+      - documentation
+    priority: 2
+    enabled: true
+    domain: knowledge
+
+  - name: DevOpsLinc
+    aliases: [devops_agent, openmaic_devops]
+    legacy_roles: [openmaic_devops, devops]
+    role: Infrastructure, deployment, and telemetry automation
+    description: Supports runtime health, deployment orchestration, and indexing jobs.
+    model: gpt-4o
+    temperature: 0.2
+    tools:
+      - container_runtime
+      - monitor
+      - deployment_runner
+      - vector_db_ops
+    memory: devops_context
+    capabilities:
+      - deployment
+      - monitoring
+      - vector_indexing
+    team_roles:
+      - devopslinc
+      - devops
+      - monitoring
+    priority: 2
+    enabled: true
+    domain: platform
+
+  - name: ResearchLinc
+    aliases: [medical_research_agent, openmaic_research]
+    legacy_roles: [openmaic_research, literature]
+    role: Clinical and medical research support
+    description: Evidence synthesis and hypothesis support for provider teams.
+    model: gpt-4o
+    temperature: 0.4
+    tools:
+      - pubmed_search
+      - trial_registry
+      - evidence_grader
+    memory: research_context
+    capabilities:
+      - research_analysis
+      - literature_review
+      - hypothesis_generation
+    team_roles:
+      - researchlinc
+      - literature
+      - hypothesis
+      - experiment
+    priority: 3
+    enabled: true
+    domain: research

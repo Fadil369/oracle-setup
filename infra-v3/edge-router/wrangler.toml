@@ -1,0 +1,18 @@
+name = "brainsait-edge-router"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+account_id = "d7b99530559ab4f2545e9bdc72a7ab9b"
+workers_dev = true
+
+routes = [
+  { pattern = "brainsait.org/*", zone_id = "117f23e28c474f87e9984bc4b6753a1b" },
+  { pattern = "www.brainsait.org/*", zone_id = "117f23e28c474f87e9984bc4b6753a1b" }
+]
+
+[observability]
+enabled = true
+
+[vars]
+HEALTH_TIMEOUT_MS = "3500"
+ROUTE_MAP_JSON = '{"/givc":"https://givc.brainsait.org","/sbs":"https://sbs.brainsait.org","/api":"https://api.brainsait.org","/mcp":"https://mcp.brainsait.org","/oasis":"https://oasis.brainsait.org","/basma":"https://basma.brainsait.org"}'
+HEALTH_TARGETS_JSON = '[{"id":"givc","url":"https://givc.brainsait.org/health"},{"id":"sbs","url":"https://sbs.brainsait.org/health"},{"id":"api","url":"https://api.brainsait.org/health"},{"id":"mcp","url":"https://mcp.brainsait.org/health"},{"id":"oasis","url":"https://oasis.brainsait.org/health"},{"id":"basma","url":"https://basma.brainsait.org/health"},{"id":"portal","url":"https://portal.brainsait.org/health"}]'

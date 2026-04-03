@@ -4,7 +4,6 @@ Discovers, loads, and manages agents from YAML definitions.
 """
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -33,6 +32,9 @@ class AgentDefinition:
         self.priority: int = config.get("priority", 5)
         self.enabled: bool = config.get("enabled", True)
         self.metadata: Dict[str, Any] = config.get("metadata", {})
+        self.aliases: List[str] = config.get("aliases", [])
+        self.legacy_roles: List[str] = config.get("legacy_roles", [])
+        self.domain: str = config.get("domain", "general")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,6 +48,9 @@ class AgentDefinition:
             "team_roles": self.team_roles,
             "priority": self.priority,
             "enabled": self.enabled,
+            "aliases": self.aliases,
+            "legacy_roles": self.legacy_roles,
+            "domain": self.domain,
         }
 
     def __repr__(self):
@@ -58,39 +63,55 @@ class AgentRegistry:
     Supports dynamic agent assembly into teams.
     """
 
-    def __init__(self, agents_dir: str = "agents"):
+    LEGACY_ROLE_MAP: Dict[str, str] = {
+        "openmaic_doctor": "doctorlinc",
+        "openmaic_nurse": "nurselinc",
+        "openmaic_claims": "claimlinc",
+        "openmaic_compliance": "compliancelinc",
+        "openmaic_knowledge": "knowledgelinc",
+        "openmaic_research": "researchlinc",
+        "openmaic_devops": "devopslinc",
+        "clinical": "doctorlinc",
+        "nursing": "nurselinc",
+        "claims": "claimlinc",
+        "compliance": "compliancelinc",
+        "knowledge": "knowledgelinc",
+    }
+
+    def __init__(self, agents_dir: str = "agents", registry_file: Optional[str] = None):
         self.agents_dir = Path(agents_dir)
+        self.registry_file = Path(registry_file) if registry_file else None
         self.agents: Dict[str, AgentDefinition] = {}
 
     async def load_all(self):
         """Scan the agents directory and load all YAML definitions."""
+        self.agents.clear()
+
+        if self.registry_file and self.registry_file.exists():
+            self._load_from_path(self.registry_file)
+
         if not self.agents_dir.exists():
-            logger.warning("Agents directory not found: %s", self.agents_dir)
+            if not self.agents:
+                logger.warning("Agents directory not found: %s", self.agents_dir)
             return
 
-        loaded = 0
         for yaml_file in sorted(self.agents_dir.glob("*.yaml")):
-            try:
-                agents = self._load_yaml(yaml_file)
-                for agent in agents:
-                    if agent and agent.enabled:
-                        self.agents[agent.name] = agent
-                        loaded += 1
-            except Exception as e:
-                logger.error("Failed to load agent %s: %s", yaml_file.name, e)
+            self._load_from_path(yaml_file)
 
         # Also check .yml extension
         for yml_file in sorted(self.agents_dir.glob("*.yml")):
-            try:
-                agents = self._load_yaml(yml_file)
-                for agent in agents:
-                    if agent and agent.enabled:
-                        self.agents[agent.name] = agent
-                        loaded += 1
-            except Exception as e:
-                logger.error("Failed to load agent %s: %s", yml_file.name, e)
+            self._load_from_path(yml_file)
 
-        logger.info("Loaded %d agents from %s", loaded, self.agents_dir)
+        logger.info("Loaded %d agents from registry sources", len(self.agents))
+
+    def _load_from_path(self, path: Path):
+        try:
+            agents = self._load_yaml(path)
+            for agent in agents:
+                if agent and agent.enabled:
+                    self.agents[agent.name] = agent
+        except Exception as e:
+            logger.error("Failed to load agent %s: %s", path.name, e)
 
     def _load_yaml(self, path: Path) -> List[AgentDefinition]:
         """Load agent definitions from a YAML file."""
@@ -104,7 +125,12 @@ class AgentRegistry:
             docs = yaml.safe_load_all(f)
             for doc in docs:
                 if doc and isinstance(doc, dict):
-                    agents.append(AgentDefinition(doc))
+                    if "agents" in doc and isinstance(doc["agents"], list):
+                        for item in doc["agents"]:
+                            if isinstance(item, dict):
+                                agents.append(AgentDefinition(item))
+                    else:
+                        agents.append(AgentDefinition(doc))
 
         return agents
 
@@ -155,12 +181,28 @@ class AgentRegistry:
         """Get agent by name."""
         return self.agents.get(name)
 
+    def get_by_name_or_alias(self, name: str) -> Optional[AgentDefinition]:
+        """Get an agent by canonical name or alias."""
+        candidate = name.lower()
+        for agent in self.agents.values():
+            if agent.name.lower() == candidate:
+                return agent
+            if any(a.lower() == candidate for a in agent.aliases):
+                return agent
+        return None
+
     def get_by_role(self, role_keyword: str) -> List[AgentDefinition]:
         """Find agents whose role contains the keyword."""
         keyword = role_keyword.lower()
+        migrated = self.map_legacy_role(role_keyword)
         return [
             a for a in self.agents.values()
-            if keyword in a.role.lower() or keyword in a.name.lower()
+            if keyword in a.role.lower()
+            or keyword in a.name.lower()
+            or any(keyword in alias.lower() for alias in a.aliases)
+            or any(keyword in lr.lower() for lr in a.legacy_roles)
+            or migrated in a.name.lower()
+            or migrated in a.role.lower()
         ]
 
     def get_by_capability(self, capability: str) -> List[AgentDefinition]:
@@ -174,10 +216,18 @@ class AgentRegistry:
     def get_by_team_role(self, team_role: str) -> List[AgentDefinition]:
         """Find agents assigned to a specific team role."""
         role = team_role.lower()
+        migrated = self.map_legacy_role(team_role)
         return [
             a for a in self.agents.values()
             if any(role in r.lower() for r in a.team_roles)
+            or any(migrated in r.lower() for r in a.team_roles)
+            or migrated in a.name.lower()
         ]
+
+    def map_legacy_role(self, role_name: str) -> str:
+        """Map an OpenMAIC/legacy role name to BrainSAIT Linc role naming."""
+        key = role_name.strip().lower()
+        return self.LEGACY_ROLE_MAP.get(key, key)
 
     def list_all(self) -> List[Dict[str, Any]]:
         """Return summary of all loaded agents."""

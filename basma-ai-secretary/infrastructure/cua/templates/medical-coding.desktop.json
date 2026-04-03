@@ -1,0 +1,30 @@
+{
+  "id": "medical-coding-desktop",
+  "name": "Medical Coding Desktop",
+  "description": "Agent workstation for EHR coding and NPHIES portal workflows",
+  "profile": "medical_coding",
+  "resources": {
+    "cpu_cores": 4,
+    "memory_mb": 6144,
+    "resolution": "1920x1080"
+  },
+  "apps": [
+    {
+      "name": "EHR Portal",
+      "url": "https://ehr.example.local/"
+    },
+    {
+      "name": "NPHIES Portal",
+      "url": "https://nphies.sa/"
+    },
+    {
+      "name": "ICD-10 Browser",
+      "url": "https://icd.who.int/browse10/2019/en"
+    }
+  ],
+  "vnc": {
+    "port": 6901,
+    "browser_port": 3901
+  },
+  "tags": ["medical", "coding", "ehr", "nphies"]
+}

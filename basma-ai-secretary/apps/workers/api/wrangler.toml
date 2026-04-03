@@ -34,12 +34,33 @@ script_name = "basma-voice-worker"
 
 [observability]
 enabled = true
+
 [vars]
-TELEGRAM_BOT_TOKEN = "8617157324:AAHzUOx5OF-e36cdZQDaq8MHAC51iZ21UpI"
-JWT_SECRET = "brainsait_basma_secret"
-ANTHROPIC_API_KEY = "REPLACE_WITH_USER_API_KEY"
-# TWILIO_ACCOUNT_SID = "REPLACE_WITH_SECRET"
-# TWILIO_AUTH_TOKEN = "REPLACE_WITH_SECRET"
-# TWILIO_PHONE_NUMBER = "REPLACE_WITH_SECRET"
-# WHATSAPP_BUSINESS_TOKEN = "REPLACE_WITH_SECRET"
-# ENCRYPTION_KEY = "REPLACE_WITH_SECRET"
+BASMA_API_URL = "https://basma-api.brainsait.org"
+BASMA_WEB_URL = "https://bsma.brainsait.org"
+BASMA_VOICE_URL = "https://basma-voice.brainsait.org"
+BASMA_WIDGET_URL = "https://basma.brainsait.org/widget.js"
+BASMA_OWNER_EMAIL = "basma@brainsait.org"
+BASMA_OWNER_NAME = "BrainSAIT Basma"
+CORS_ALLOWED_ORIGINS = "https://brainsait.org,https://www.brainsait.org,https://bsma.brainsait.org,https://basma.brainsait.org,https://elfadil.com,https://www.elfadil.com,https://thefadil.site,https://www.thefadil.site,http://localhost:3000"
+N8N_WEBHOOK_URL = ""
+BASMA_DESKTOP_API_BASE = ""
+BASMA_SERVER_STATUS_URL = ""
+BASMA_AI_ROUTER_URL = ""
+WIDGET_TOKEN_TTL_SECONDS = "180"
+
+# Configure these with `wrangler secret put <NAME>`
+# ANTHROPIC_API_KEY
+# TELEGRAM_BOT_TOKEN
+# BASMA_DESKTOP_API_TOKEN
+# BASMA_AI_ROUTER_TOKEN
+# WIDGET_SOCKET_SECRET
+# JWT_SECRET
+# TWILIO_ACCOUNT_SID
+# TWILIO_AUTH_TOKEN
+# TWILIO_PHONE_NUMBER
+# WHATSAPP_BUSINESS_TOKEN
+# WHATSAPP_PHONE_NUMBER_ID
+# N8N_WEBHOOK_URL
+# N8N_WEBHOOK_TOKEN
+# ENCRYPTION_KEY

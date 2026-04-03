@@ -1,51 +1,78 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # BRAINSAIT: Basma AI Secretary - Unified Deployment Script
-# Targets: Cloudflare Workers, Pages, D1, KV, R2
 
-set -e
+set -euo pipefail
 
-# Configuration
-DB_NAME="basma_production"
-R2_BUCKET="basma-storage"
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DB_NAME="${DB_NAME:-basma_production}"
+R2_BUCKET="${R2_BUCKET:-basma-storage}"
 KV_NAMESPACES=("CACHE" "SESSIONS" "RATE_LIMIT")
 
-echo "🚀 Initializing Basma AI Secretary Infrastructure..."
+SKIP_INFRA="${SKIP_INFRA:-0}"
+SKIP_WORKERS="${SKIP_WORKERS:-0}"
+SKIP_SMOKE="${SKIP_SMOKE:-0}"
+SMOKE_SCRIPT="$ROOT_DIR/scripts/smoke-test.sh"
 
-# 1. Create D1 Database (using existing if already created)
-echo "📦 Setting up D1 Database..."
-npx wrangler d1 create $DB_NAME || true
-npx wrangler d1 execute $DB_NAME --file=./infrastructure/schema.sql --yes
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "ERROR: required command not found: $1"
+    exit 1
+  }
+}
 
-# 2. Create R2 Bucket
-echo "🗄️ Setting up R2 Storage..."
-npx wrangler r2 bucket create $R2_BUCKET || true
+run_step() {
+  local title="$1"
+  shift
+  echo "==> $title"
+  "$@"
+}
 
-# 3. Create KV Namespaces
-echo "⚡ Setting up KV Cache..."
-for kv in "${KV_NAMESPACES[@]}"; do
-  npx wrangler kv:namespace create $kv || true
-done
+require_cmd npx
 
-# 4. Prompt for Secrets (User manual step)
-echo "🔒 Reminder: Set secrets using 'npx wrangler secret put <NAME>'"
-echo "Required: ANTHROPIC_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, JWT_SECRET, ENCRYPTION_KEY"
+echo "Starting Basma deployment"
+echo "Root: $ROOT_DIR"
+echo "Database: $DB_NAME"
+echo "R2 bucket: $R2_BUCKET"
 
-# 5. Deploy Workers
-echo "📡 Deploying Workers..."
-cd apps/workers/api && npx wrangler deploy
-cd ../voice && npx wrangler deploy
-cd ../widget && npx wrangler deploy
-cd ../../..
+if [[ "$SKIP_INFRA" != "1" ]]; then
+  run_step "Create D1 database (idempotent)" npx wrangler d1 create "$DB_NAME" || true
+  run_step "Apply base schema" npx wrangler d1 execute "$DB_NAME" --file="$ROOT_DIR/infrastructure/schema.sql" --yes
+  run_step "Apply CRM memory migration" npx wrangler d1 execute "$DB_NAME" --file="$ROOT_DIR/infrastructure/migrations/0001_basma_crm_memory.sql" --yes
+  run_step "Create R2 bucket (idempotent)" npx wrangler r2 bucket create "$R2_BUCKET" || true
 
-# 6. Deploy Frontend (Pages)
-echo "🌐 Deploying Next.js Dashboard to Cloudflare Pages..."
-cd apps/web
-# npm install --no-audit (should be run if environment allows)
-# npx wrangler pages deploy .next/static --project-name basma-dashboard
-cd ../..
+  echo "==> Create KV namespaces (idempotent)"
+  for kv in "${KV_NAMESPACES[@]}"; do
+    npx wrangler kv:namespace create "$kv" || true
+  done
+else
+  echo "Skipping infrastructure provisioning (SKIP_INFRA=1)"
+fi
 
-echo "✅ Basma AI Secretary Platform Deployed Successfully!"
-echo "Main Dashboard: https://bsma.brainsait.org"
-echo "API Gateway: https://basma-api.brainsait.org"
-echo "Voice Engine: https://basma-voice.brainsait.org"
-echo "Widget JS: https://basma-api.brainsait.org/widget.js"
+echo "Secrets checklist"
+echo "Required secrets: ANTHROPIC_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, WHATSAPP_BUSINESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, JWT_SECRET, ENCRYPTION_KEY"
+echo "Optional: N8N_WEBHOOK_URL (var), N8N_WEBHOOK_TOKEN (secret)"
+
+if [[ "$SKIP_WORKERS" != "1" ]]; then
+  run_step "Deploy API worker" bash -c "cd '$ROOT_DIR/apps/workers/api' && npx wrangler deploy"
+  run_step "Deploy Voice worker" bash -c "cd '$ROOT_DIR/apps/workers/voice' && npx wrangler deploy"
+  run_step "Deploy Widget worker" bash -c "cd '$ROOT_DIR/apps/workers/widget' && npx wrangler deploy"
+else
+  echo "Skipping workers deployment (SKIP_WORKERS=1)"
+fi
+
+if [[ "$SKIP_SMOKE" != "1" ]]; then
+  if [[ -f "$SMOKE_SCRIPT" ]]; then
+    chmod +x "$SMOKE_SCRIPT"
+    run_step "Run smoke tests" "$SMOKE_SCRIPT"
+  else
+    echo "Smoke test script not found at $SMOKE_SCRIPT"
+    exit 1
+  fi
+else
+  echo "Skipping smoke tests (SKIP_SMOKE=1)"
+fi
+
+echo "Deployment workflow completed"
+echo "Dashboard: https://bsma.brainsait.org"
+echo "API: https://basma-api.brainsait.org"
+echo "Voice: https://basma-voice.brainsait.org"

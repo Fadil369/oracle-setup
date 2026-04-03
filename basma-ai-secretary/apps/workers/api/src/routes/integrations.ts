@@ -37,24 +37,4 @@ integrations.post('/', async (c) => {
   return c.json({ apiKey, message: 'Integration added successfully' }, 201);
 });
 
-// GET /widget/config - Public endpoint for widget authentication
-// No JWT required, uses Referer or Origin header for verification
-integrations.get('/config', async (c) => {
-  const origin = c.req.header('Origin') || c.req.header('Referer') || '';
-  const domain = new URL(origin).hostname;
-
-  const integration = await c.env.DB.prepare(`
-    SELECT * FROM integrations WHERE domain = ? AND verified = 1
-  `).bind(domain).first();
-
-  if (!integration) {
-    return c.json({ error: 'Domain not authorized' }, 403);
-  }
-
-  return c.json({
-    settings: JSON.parse(integration.settings as string),
-    voiceEnabled: true
-  });
-});
-
 export { integrations as integrationsRoutes };

@@ -1,0 +1,30 @@
+{
+  "id": "research-intelligence-desktop",
+  "name": "Research Intelligence Desktop",
+  "description": "Agent workstation for PubMed research and PDF analysis pipelines",
+  "profile": "research_intelligence",
+  "resources": {
+    "cpu_cores": 4,
+    "memory_mb": 6144,
+    "resolution": "1920x1080"
+  },
+  "apps": [
+    {
+      "name": "PubMed",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/"
+    },
+    {
+      "name": "Semantic Scholar",
+      "url": "https://www.semanticscholar.org/"
+    },
+    {
+      "name": "PDF Analyzer",
+      "url": "https://pdf.brainsait.org/"
+    }
+  ],
+  "vnc": {
+    "port": 6902,
+    "browser_port": 3902
+  },
+  "tags": ["research", "pubmed", "pdf", "intelligence"]
+}

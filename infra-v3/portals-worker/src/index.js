@@ -107,12 +107,13 @@ const EDGE_SERVICE_DIRECTORY = [
     category: "Patient interface",
     audience: "Patients, families, and guided front-desk journeys",
     kind: "primary",
-    description: "BSMA is the patient front door for appointments, medical records, claims follow-up, and Arabic-first care communication across BrainSAIT.",
+    description: "BSMA is the patient front door for appointments, medical records, claims follow-up, and Arabic-first care communication across BrainSAIT, now complemented by Basma AI secretary intake and guided scheduling flows.",
     launchHref: "https://app.brainsait.org",
     launchLabel: "Open BSMA",
     features: [
       "Patient-facing appointments, records, and claims access",
       "Arabic-first experience with guided digital journeys",
+      "Basma AI secretary for bilingual intake, appointment routing, and follow-up",
       "Connected to provider, payer, and government workflows",
     ],
   },
@@ -1193,6 +1194,33 @@ function redactHospitalInternals(hospital) {
   delete safe.backend;
   delete safe.backendHost;
   return safe;
+}
+
+function buildStableHospitalDirectory(snapshot) {
+  const liveHospitals = new Map((snapshot?.hospitals || []).map((hospital) => [hospital.id, hospital]));
+
+  return BRANCHES.map((branch) => {
+    const live = liveHospitals.get(branch.id) || {};
+    return {
+      id: branch.id,
+      kind: "hospital",
+      name: branch.name,
+      nameEn: branch.nameEn,
+      region: branch.region,
+      subdomain: branch.subdomain,
+      loginPath: branch.loginPath,
+      url: `https://${branch.subdomain}${branch.loginPath}`,
+      online: false,
+      statusCode: 0,
+      latency: null,
+      error: null,
+      probedAt: null,
+      tone: "watch",
+      healthLabel: "Pinned directory",
+      signal: "Stable portal entry. Live network status will update here when probes succeed.",
+      ...live,
+    };
+  });
 }
 
 function redactActionInternals(action) {
@@ -4598,6 +4626,7 @@ function renderStatusPage(snapshot) {
   const overall = summary.overall || {};
   const infra = buildInfrastructureSnapshot(snapshot);
   const platformStatus = derivePlatformStatus(summary);
+  const hospitalDirectory = buildStableHospitalDirectory(snapshot);
 
   const hospOnline = hosp.online || 0;
   const hospTotal = hosp.total || BRANCHES.length;
@@ -4653,18 +4682,40 @@ function renderStatusPage(snapshot) {
         </div>
       </section>
 
-      ${(snapshot.hospitals || []).length ? `
+      ${hospitalDirectory.length ? `
       <section class="section" style="padding-top:0;">
         <div class="container">
           <div class="section-label">Hospital Network</div>
           <div class="section-title">Branch connectivity</div>
           <div class="features-list" style="max-width:760px;margin-top:20px;">
-            ${(snapshot.hospitals || []).map((hospital, index) => renderStatusRow(
+            ${hospitalDirectory.map((hospital, index) => renderStatusRow(
               hospital.nameEn || hospital.name || hospital.id,
               `${hospital.region || 'Hospital'} · ${hospital.healthLabel || 'Unknown'} · ${formatLatency(hospital.latency)}`,
               hospital.signal || 'Awaiting next probe.',
               hospital.tone || (hospital.online ? 'stable' : 'critical'),
               index,
+            )).join('')}
+          </div>
+        </div>
+      </section>
+      ` : ''}
+
+      ${hospitalDirectory.length ? `
+      <section class="section" style="padding-top:0;">
+        <div class="container">
+          <div class="section-label">Stable Access</div>
+          <div class="section-title">Pinned branch portal directory</div>
+          <p class="section-desc" style="margin-bottom:24px;max-width:760px;">
+            All branch portals stay visible here as a constant directory even when live probes fluctuate.
+            Use this area to open the Oracle portal directly while the control-tower health signal catches up.
+          </p>
+          <div class="lanes-grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));">
+            ${hospitalDirectory.map((hospital, index) => renderServiceCard(
+              '🏥',
+              hospital.nameEn || hospital.name || hospital.id,
+              `${hospital.region || 'Hospital'} · ${hospital.healthLabel || 'Pinned directory'}`,
+              hospital.url,
+              getStaggerClass(index),
             )).join('')}
           </div>
         </div>
@@ -5531,13 +5582,13 @@ function renderDashboard(snapshot) {
       </div>
     </section>
 
-    <section class="section-shell stack fade-up delay-2" id="network">
-      <div class="section-header">
-        <div>
-          <p class="eyebrow">Hospital network</p>
-          <h2>Live Oracle and branch connectivity</h2>
-        </div>
-        <p>Search hospitals, filter by operational state, and refresh in place. This grid is rendered from the control-tower snapshot rather than fixed HTML.</p>
+      <section class="section-shell stack fade-up delay-2" id="network">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Hospital network</p>
+            <h2>Live Oracle and branch connectivity</h2>
+          </div>
+        <p>Search hospitals, filter by operational state, and refresh in place. The branch directory stays pinned from the static hospital registry, while live probe health is layered over each portal card.</p>
       </div>
       <div class="toolbar">
         <label class="search-box">
@@ -5754,6 +5805,7 @@ function renderDashboard(snapshot) {
 
   <script>
     const initialSnapshot = ${serializedSnapshot};
+    const hospitalDirectorySeed = ${serializeForInlineScript(buildStableHospitalDirectory({}))};
 
     (() => {
       const state = {
@@ -5909,9 +5961,7 @@ function renderDashboard(snapshot) {
               '<span>', escapeHtml(item.subdomain), '</span>',
               '<span>', escapeHtml(item.loginPath), '</span>',
             '</div>',
-            item.online
-              ? '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener noreferrer" class="primary-link">Open Oracle Portal</a>'
-              : '<span class="primary-link disabled-link">Portal unavailable</span>',
+            '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener noreferrer" class="primary-link">' + escapeHtml(item.online ? 'Open Oracle Portal' : 'Open portal directly') + '</a>',
           '</article>'
         ].join('');
       }
@@ -6110,7 +6160,7 @@ function renderDashboard(snapshot) {
 
       function getVisibleHospitals() {
         const search = state.search.trim().toLowerCase();
-        return state.snapshot.hospitals.filter((item) => {
+        return getHospitalDirectory().filter((item) => {
           const matchesFilter = state.filter === "all" || item.tone === state.filter;
           if (!matchesFilter) return false;
           if (!search) return true;
@@ -6120,6 +6170,25 @@ function renderDashboard(snapshot) {
             .join(" ")
             .toLowerCase();
           return haystack.includes(search);
+        });
+      }
+
+      function getHospitalDirectory() {
+        const liveHospitals = new Map((state.snapshot.hospitals || []).map((item) => [item.id, item]));
+        return hospitalDirectorySeed.map((item) => {
+          const live = liveHospitals.get(item.id);
+          return live
+            ? {
+                ...item,
+                ...live,
+                url: item.url,
+                subdomain: item.subdomain,
+                loginPath: item.loginPath,
+                region: item.region,
+                name: item.name,
+                nameEn: item.nameEn,
+              }
+            : item;
         });
       }
 
@@ -6147,10 +6216,11 @@ function renderDashboard(snapshot) {
       }
 
       function renderHospitals() {
+        const hospitalDirectory = getHospitalDirectory();
         const hospitals = getVisibleHospitals();
         refs.visibleHospitalCount.textContent = hospitals.length;
         refs.filterSummary.textContent = hospitals.length
-          ? "Showing " + hospitals.length + " of " + state.snapshot.hospitals.length + " monitored hospital branches."
+          ? "Showing " + hospitals.length + " of " + hospitalDirectory.length + " monitored hospital branches."
           : "No hospitals match the current search and filter.";
         refs.hospitalGrid.innerHTML = hospitals.length
           ? hospitals.map(renderHospitalCard).join("")

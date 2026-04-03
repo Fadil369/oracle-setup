@@ -13,14 +13,15 @@ logger = logging.getLogger("maos.agent_router")
 # Task type → required team roles mapping
 TASK_TEAM_MAP: Dict[str, List[str]] = {
     # Healthcare
-    "clinical_assessment": ["clinical", "nursing", "risk_analysis"],
-    "hospital_simulation": ["patient_sim", "nursing", "clinical", "lab", "consultant", "risk_analysis"],
+    "clinical_assessment": ["doctorlinc", "nurselinc", "risk_analysis"],
+    "hospital_simulation": ["patient_sim", "nurselinc", "doctorlinc", "lab", "consultant", "risk_analysis"],
+    "hospital_digital_twin": ["patient_sim", "nurselinc", "doctorlinc", "lab", "claimlinc", "compliancelinc"],
     "triage": ["nursing", "clinical"],
     "diagnosis": ["clinical", "lab", "consultant"],
 
     # Claims & Revenue
-    "claims_processing": ["claims", "compliance", "coding"],
-    "claims_appeal": ["claims", "compliance", "documentation"],
+    "claims_processing": ["claimlinc", "compliancelinc", "coding"],
+    "claims_appeal": ["claimlinc", "compliancelinc", "documentation"],
     "eligibility_check": ["claims", "compliance"],
     "coding_review": ["coding", "compliance"],
 
@@ -35,16 +36,17 @@ TASK_TEAM_MAP: Dict[str, List[str]] = {
     "monitoring": ["monitoring", "devops"],
 
     # Knowledge
-    "knowledge_retrieval": ["knowledge"],
-    "document_analysis": ["knowledge", "compliance"],
+    "knowledge_retrieval": ["knowledgelinc"],
+    "document_analysis": ["knowledgelinc", "compliancelinc"],
+    "vector_indexing": ["knowledgelinc", "devopslinc"],
 
     # Media
     "video_processing": ["media"],
     "transcription": ["media"],
 
     # General
-    "general": ["knowledge"],
-    "startup_advisory": ["startup_advisor", "knowledge"],
+    "general": ["knowledgelinc"],
+    "startup_advisory": ["startup_advisor", "knowledgelinc"],
 }
 
 
@@ -67,6 +69,9 @@ class AgentRouter:
         # Check explicit task-team mapping
         required_roles = TASK_TEAM_MAP.get(task_type, [])
 
+        if payload.get("required_roles"):
+            required_roles = payload["required_roles"]
+
         if required_roles:
             team = []
             for role in required_roles:
@@ -85,7 +90,20 @@ class AgentRouter:
                 return team
 
         # Fallback: capability-based matching
-        team = self.registry.get_by_capability(task_type)
+        capability_hints = [task_type] + payload.get("required_capabilities", [])
+        team = []
+        for capability in capability_hints:
+            team.extend(self.registry.get_by_capability(capability))
+
+        # De-duplicate while preserving order.
+        deduped: List[AgentDefinition] = []
+        seen = set()
+        for member in team:
+            if member.name not in seen:
+                deduped.append(member)
+                seen.add(member.name)
+
+        team = deduped
         if team:
             logger.info(
                 "Capability-matched task '%s' to: %s",

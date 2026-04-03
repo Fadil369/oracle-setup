@@ -25,13 +25,14 @@ class MAOSOrchestrator:
     Coordinates agent teams, routes tasks, and manages the agent lifecycle.
     """
 
-    VERSION = "1.0.0"
+    VERSION = "5.0.0"
     PLATFORM = "BrainSAIT eCarePlus"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.registry = AgentRegistry(
-            agents_dir=self.config.get("agents_dir", "agents")
+            agents_dir=self.config.get("agents_dir", "agents"),
+            registry_file=self.config.get("registry_file"),
         )
         self.router = AgentRouter(registry=self.registry)
         self.task_engine = TaskEngine()
@@ -125,6 +126,8 @@ class MAOSOrchestrator:
             "uptime_seconds": uptime,
             "agents_loaded": len(self.registry.agents),
             "agent_names": list(self.registry.agents.keys()),
+            "registry_file": str(self.registry.registry_file) if self.registry.registry_file else None,
+            "agents_dir": str(self.registry.agents_dir),
             "memory_backend": self.memory.backend,
             "tasks_completed": self.task_engine.completed_count,
             "tasks_failed": self.task_engine.failed_count,

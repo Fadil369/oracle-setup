@@ -1,0 +1,10 @@
+name = "basma-widget-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[observability]
+enabled = true
+
+[vars]
+BASMA_WEB_URL = "https://bsma.brainsait.org"
+BASMA_API_URL = "https://basma-api.brainsait.org"

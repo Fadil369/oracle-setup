@@ -24,6 +24,7 @@ logger = logging.getLogger("maos.api_gateway")
 
 orchestrator = MAOSOrchestrator(config={
     "agents_dir": os.environ.get("AGENTS_DIR", "agents"),
+    "registry_file": os.environ.get("AGENT_REGISTRY_FILE", "maos/registry/agents.masterlinc.yaml"),
     "memory_backend": os.environ.get("MEMORY_BACKEND", "local"),
 })
 
@@ -39,8 +40,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="BrainSAIT MAOS API",
-    description="Multi-Agent Operating System for BrainSAIT Healthcare Platform",
-    version="1.0.0",
+    description="Multi-Agent Operating System for BrainSAIT Healthcare Platform v5.0",
+    version="5.0.0",
     lifespan=lifespan,
 )
 
@@ -77,6 +78,13 @@ class TelegramWebhook(BaseModel):
     message: Optional[Dict[str, Any]] = None
 
 
+class MCPInvokeRequest(BaseModel):
+    method: str
+    agent: Optional[str] = None
+    params: Dict[str, Any] = {}
+    context: Dict[str, Any] = {}
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -84,7 +92,7 @@ async def root():
     return {
         "platform": "BrainSAIT eCarePlus",
         "system": "MAOS — Multi-Agent Operating System",
-        "version": "1.0.0",
+        "version": "5.0.0",
         "status": "operational",
         "endpoints": {
             "status": "/status",
@@ -93,6 +101,9 @@ async def root():
             "research": "POST /research",
             "agents": "/agents",
             "telegram": "POST /telegram/webhook",
+            "mcp_tools": "/mcp/tools",
+            "mcp_invoke": "POST /mcp/invoke",
+            "mcp_agents": "/mcp/agents",
         },
     }
 
@@ -176,4 +187,80 @@ async def health():
             "nphies": True,
             "fhir_r4": True,
         },
+    }
+
+
+# ── MCP (Model Context Protocol) endpoints ──────────────────────────────
+
+@app.get("/mcp/tools")
+async def mcp_list_tools():
+    """List all available MCP tools from registered agents."""
+    tools = []
+    for agent in orchestrator.registry.list_all():
+        for tool in agent.get("tools", []):
+            tools.append({
+                "name": tool,
+                "agent": agent["name"],
+                "domain": agent.get("domain", "general"),
+                "priority": agent.get("priority", 3),
+            })
+    return {
+        "jsonrpc": "2.0",
+        "result": {"tools": tools, "total": len(tools)},
+    }
+
+
+@app.post("/mcp/invoke")
+async def mcp_invoke(req: MCPInvokeRequest):
+    """
+    MasterLinc MCP gateway — invoke agent capabilities via Model Context Protocol.
+    Routes to the appropriate agent (ClinicalLinc, ClaimLinc, etc.) using the registry.
+    """
+    # Resolve target agent
+    target = None
+    if req.agent:
+        target = orchestrator.registry.get_by_name_or_alias(req.agent)
+
+    if not target:
+        # Attempt capability-based routing
+        candidates = orchestrator.registry.get_by_capability(req.method)
+        if candidates:
+            target = candidates[0]
+
+    if not target:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No agent found for method '{req.method}' or agent '{req.agent}'",
+        )
+
+    result = await orchestrator.submit_task(
+        task_type=req.method,
+        payload={**req.params, "mcp_context": req.context},
+        priority="normal",
+        requester="mcp-gateway",
+    )
+    return {
+        "jsonrpc": "2.0",
+        "result": result,
+        "agent": target.name if hasattr(target, "name") else str(target),
+    }
+
+
+@app.get("/mcp/agents")
+async def mcp_agents():
+    """List agents with their MCP-compatible capability declarations."""
+    agents = []
+    for agent in orchestrator.registry.list_all():
+        agents.append({
+            "name": agent["name"],
+            "role": agent.get("role", ""),
+            "capabilities": agent.get("capabilities", []),
+            "tools": agent.get("tools", []),
+            "domain": agent.get("domain", "general"),
+            "enabled": agent.get("enabled", True),
+            "priority": agent.get("priority", 3),
+        })
+    return {
+        "jsonrpc": "2.0",
+        "result": {"agents": agents, "total": len(agents)},
     }

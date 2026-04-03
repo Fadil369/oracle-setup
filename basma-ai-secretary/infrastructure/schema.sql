@@ -38,6 +38,34 @@ CREATE INDEX idx_visitors_user ON visitors(user_id);
 CREATE INDEX idx_visitors_status ON visitors(status);
 CREATE INDEX idx_visitors_segment ON visitors(segment_id);
 
+-- Leads (Explicit CRM lead lifecycle tracking)
+CREATE TABLE leads (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    visitor_id TEXT NOT NULL,
+    stage TEXT DEFAULT 'new', -- 'new', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
+    source TEXT, -- 'voice', 'web_widget', 'whatsapp', 'sms', 'telegram', 'crm'
+    source_channel TEXT, -- kept for compatibility with legacy analytics payloads
+    score INTEGER DEFAULT 0,
+    sentiment TEXT DEFAULT 'neutral', -- 'positive', 'neutral', 'negative', 'urgent'
+    status TEXT DEFAULT 'open', -- 'open', 'nurturing', 'converted', 'archived'
+    intent TEXT,
+    notes TEXT,
+    tags TEXT, -- JSON array
+    next_action_at INTEGER,
+    last_contact_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (visitor_id) REFERENCES visitors(id),
+    UNIQUE(visitor_id),
+    UNIQUE(user_id, visitor_id)
+);
+
+CREATE INDEX idx_leads_user ON leads(user_id);
+CREATE INDEX idx_leads_stage ON leads(stage);
+CREATE INDEX idx_leads_score ON leads(score);
+
 -- Visitor Segments
 CREATE TABLE segments (
     id TEXT PRIMARY KEY,
@@ -93,6 +121,29 @@ CREATE TABLE call_logs (
 
 CREATE INDEX idx_call_logs_user ON call_logs(user_id);
 CREATE INDEX idx_call_logs_visitor ON call_logs(visitor_id);
+
+-- Basma Memory (Cross-call context and sentiment memory)
+CREATE TABLE basma_memory (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    visitor_id TEXT,
+    call_id TEXT,
+    memory_key TEXT NOT NULL,
+    memory_value TEXT NOT NULL, -- JSON payload
+    sentiment TEXT DEFAULT 'neutral',
+    language TEXT DEFAULT 'mixed',
+    confidence REAL DEFAULT 0.5,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (visitor_id) REFERENCES visitors(id),
+    FOREIGN KEY (call_id) REFERENCES call_logs(id)
+);
+
+CREATE INDEX idx_basma_memory_user ON basma_memory(user_id);
+CREATE INDEX idx_basma_memory_visitor ON basma_memory(visitor_id);
+CREATE INDEX idx_basma_memory_key ON basma_memory(memory_key);
+CREATE INDEX idx_basma_memory_sentiment ON basma_memory(sentiment);
 
 -- Communications (SMS, WhatsApp, Email)
 CREATE TABLE communications (

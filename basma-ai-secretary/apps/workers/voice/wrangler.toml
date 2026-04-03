@@ -14,8 +14,9 @@ binding = "R2_STORAGE"
 bucket_name = "basma-storage"
 
 # Durable Objects
-[[durable_objects]]
-bindings = [{ name = "VOICE_SESSION", class_name = "VoiceSession" }]
+[[durable_objects.bindings]]
+name = "VOICE_SESSION"
+class_name = "VoiceSession"
 
 [[migrations]]
 tag = "v1"
@@ -23,3 +24,12 @@ new_classes = ["VoiceSession"]
 
 [observability]
 enabled = true
+
+[vars]
+WIDGET_ALLOWED_ORIGINS = "elfadil.com,www.elfadil.com,thefadil.site,www.thefadil.site,brainsait.org,www.brainsait.org,bsma.brainsait.org,basma.brainsait.org,localhost"
+
+# Configure these with `wrangler secret put <NAME>`
+# ANTHROPIC_API_KEY
+# N8N_WEBHOOK_URL
+# N8N_WEBHOOK_TOKEN
+# WIDGET_SOCKET_SECRET

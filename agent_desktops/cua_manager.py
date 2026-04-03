@@ -9,6 +9,8 @@ Each AI agent can launch its own virtual workstation with:
 - VNC access
 
 Desktop templates define the configuration for each agent type.
+Agent-to-desktop mapping allows MAOS agents (DoctorLinc, ResearchLinc, etc.)
+to automatically provision the correct desktop template.
 """
 
 import logging
@@ -23,12 +25,16 @@ class DesktopTemplate:
 
     def __init__(self, config: Dict[str, Any]):
         self.name: str = config.get("name", "default")
-        self.base_image: str = config.get("base_image", "brainsait/agent-desktop:latest")
+        self.base_image: str = config.get(
+            "base_image", "brainsait/agent-desktop:latest"
+        )
         self.resolution: str = config.get("resolution", "1920x1080")
         self.memory_mb: int = config.get("memory_mb", 2048)
         self.cpu_cores: int = config.get("cpu_cores", 2)
         self.tools: List[str] = config.get("tools", [])
-        self.ports: Dict[str, int] = config.get("ports", {"vnc": 6901, "agent": 8000})
+        self.ports: Dict[str, int] = config.get(
+            "ports", {"vnc": 6901, "agent": 8000}
+        )
         self.env_vars: Dict[str, str] = config.get("env_vars", {})
         self.persistent_storage: bool = config.get("persistent_storage", False)
 
@@ -76,6 +82,46 @@ DESKTOP_TEMPLATES: Dict[str, DesktopTemplate] = {
         "tools": ["browser", "fhir_viewer", "dicom_viewer", "terminal"],
         "ports": {"vnc": 6901, "agent": 8000},
     }),
+    "medical_coding": DesktopTemplate({
+        "name": "medical_coding_desktop",
+        "base_image": "brainsait/agent-desktop:medical-coding",
+        "resolution": "1920x1080",
+        "memory_mb": 6144,
+        "cpu_cores": 4,
+        "tools": [
+            "browser",
+            "ehr_portal",
+            "nphies_portal",
+            "icd10_helper",
+            "terminal",
+        ],
+        "ports": {"vnc": 6901, "agent": 8000, "web": 3000},
+        "env_vars": {
+            "DESKTOP_PROFILE": "medical_coding",
+            "DEFAULT_WORKSPACE": "ehr",
+        },
+        "persistent_storage": True,
+    }),
+    "research_intelligence": DesktopTemplate({
+        "name": "research_intelligence_desktop",
+        "base_image": "brainsait/agent-desktop:research-intelligence",
+        "resolution": "1920x1080",
+        "memory_mb": 6144,
+        "cpu_cores": 4,
+        "tools": [
+            "browser",
+            "pubmed",
+            "pdf_analyzer",
+            "citation_manager",
+            "python",
+        ],
+        "ports": {"vnc": 6901, "agent": 8000, "jupyter": 8888},
+        "env_vars": {
+            "DESKTOP_PROFILE": "research_intelligence",
+            "DEFAULT_WORKSPACE": "pubmed",
+        },
+        "persistent_storage": True,
+    }),
     "training": DesktopTemplate({
         "name": "training_desktop",
         "base_image": "brainsait/agent-desktop:training",
@@ -87,11 +133,38 @@ DESKTOP_TEMPLATES: Dict[str, DesktopTemplate] = {
     }),
 }
 
+# MAOS agent → desktop template mapping
+# Allows agents to auto-provision the correct desktop type
+AGENT_DESKTOP_MAP: Dict[str, str] = {
+    "doctor_agent": "clinical",
+    "doctorlinc": "clinical",
+    "nurse_agent": "clinical",
+    "nurselinc": "clinical",
+    "claims_agent": "medical_coding",
+    "claimlinc": "medical_coding",
+    "compliance_agent": "medical_coding",
+    "compliancelinc": "medical_coding",
+    "research_agent": "research_intelligence",
+    "medical_research_agent": "research_intelligence",
+    "researchlinc": "research_intelligence",
+    "devops_agent": "coding",
+    "devopslinc": "coding",
+    "knowledge_agent": "research",
+    "knowledgelinc": "research",
+    "media_agent": "coding",
+    "medialinc": "coding",
+}
+
 
 class DesktopInstance:
     """Represents a running agent desktop instance."""
 
-    def __init__(self, instance_id: str, agent_name: str, template: DesktopTemplate):
+    def __init__(
+        self,
+        instance_id: str,
+        agent_name: str,
+        template: DesktopTemplate,
+    ):
         self.instance_id = instance_id
         self.agent_name = agent_name
         self.template = template
@@ -130,7 +203,10 @@ class CuaManager:
         """Launch a new agent desktop."""
         template = DESKTOP_TEMPLATES.get(template_name)
         if not template:
-            raise ValueError(f"Unknown template: {template_name}. Available: {list(DESKTOP_TEMPLATES.keys())}")
+            raise ValueError(
+                f"Unknown template: {template_name}. "
+                f"Available: {list(DESKTOP_TEMPLATES.keys())}"
+            )
 
         instance_id = f"desktop-{agent_name}-{len(self.instances) + 1}"
         instance = DesktopInstance(instance_id, agent_name, template)
@@ -145,7 +221,12 @@ class CuaManager:
         instance.status = "running"
 
         self.instances[instance_id] = instance
-        logger.info("Launched desktop %s for agent %s (template: %s)", instance_id, agent_name, template_name)
+        logger.info(
+            "Launched desktop %s for agent %s (template: %s)",
+            instance_id,
+            agent_name,
+            template_name,
+        )
 
         return instance
 
@@ -181,5 +262,20 @@ class CuaManager:
             "host": self.host,
             "running_instances": len(self.instances),
             "available_templates": list(DESKTOP_TEMPLATES.keys()),
+            "agent_desktop_map": AGENT_DESKTOP_MAP,
             "instances": self.list_instances(),
         }
+
+    async def launch_for_agent(self, agent_name: str) -> DesktopInstance:
+        """
+        Launch the correct desktop for a MAOS agent by name/alias.
+        Falls back to 'research' template if no explicit mapping exists.
+        """
+        normalized = agent_name.lower().replace("-", "_").replace(" ", "_")
+        template_name = AGENT_DESKTOP_MAP.get(normalized, "research")
+        return await self.launch(agent_name, template_name)
+
+    def resolve_template(self, agent_name: str) -> str:
+        """Resolve which desktop template an agent would use."""
+        normalized = agent_name.lower().replace("-", "_").replace(" ", "_")
+        return AGENT_DESKTOP_MAP.get(normalized, "research")

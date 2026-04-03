@@ -68,3 +68,36 @@ export interface Communication {
   external_id?: string;
   created_at: number;
 }
+
+export interface Lead {
+  id: string;
+  user_id: string;
+  visitor_id: string;
+  stage: 'new' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost';
+  source?: 'voice' | 'web_widget' | 'whatsapp' | 'sms' | 'telegram' | 'crm' | 'manual';
+  source_channel?: string;
+  score: number;
+  sentiment: 'positive' | 'neutral' | 'negative' | 'urgent';
+  status: 'open' | 'nurturing' | 'converted' | 'archived';
+  intent?: string;
+  notes?: string;
+  tags?: string; // JSON string array
+  next_action_at?: number;
+  last_contact_at?: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface BasmaMemory {
+  id: string;
+  user_id: string;
+  visitor_id?: string;
+  call_id?: string;
+  memory_key: string;
+  memory_value: string; // JSON string payload
+  sentiment: 'positive' | 'neutral' | 'negative' | 'urgent';
+  language: 'ar' | 'en' | 'mixed';
+  confidence: number;
+  created_at: number;
+  updated_at: number;
+}
