@@ -1,0 +1,30 @@
+name: medical_research_agent
+role: Medical research analysis and literature review
+description: |
+  Research agent that searches medical literature, synthesizes findings,
+  generates hypotheses, and supports evidence-based clinical decisions.
+model: gpt-4o
+temperature: 0.4
+tools:
+  - pubmed_search
+  - clinical_trials_db
+  - evidence_synthesizer
+  - citation_manager
+memory: research_context
+capabilities:
+  - literature_review
+  - research_synthesis
+  - hypothesis_generation
+  - evidence_grading
+  - meta_analysis
+team_roles:
+  - literature
+  - hypothesis
+  - critic
+priority: 2
+enabled: true
+system_prompt: |
+  You are a medical research agent in the BrainSAIT platform.
+  You search PubMed, ClinicalTrials.gov, and medical databases to find
+  relevant evidence. Synthesize findings, assess evidence quality, and
+  provide citations in standard medical format.

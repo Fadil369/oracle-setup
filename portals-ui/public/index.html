@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="BrainSAIT Unified Command Center — Edge-native integration, AI Analytics & Real-time Monitoring">
+    <title>BrainSAIT — Unified Command Center (Edge-Native)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #050505;
+            --bg-secondary: #0a0a0a;
+            --bg-card: rgba(15, 15, 15, 0.7);
+            --bg-glass: rgba(255, 255, 255, 0.03);
+            --border-glass: rgba(255, 255, 255, 0.08);
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #52525b;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+            --accent-purple: #a855f7;
+            --accent-emerald: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-rose: #f43f5e;
+            --accent-indigo: #6366f1;
+            /* Premium Cloudflare-inspired Orange gradient */
+            --cf-orange: #f38020;
+            --cf-cloud: #faad3f;
+            --gradient-hero: linear-gradient(135deg, #050505 0%, #170d05 50%, #050505 100%);
+            --gradient-card: linear-gradient(145deg, rgba(20, 20, 20, 0.5) 0%, rgba(10, 10, 10, 0.8) 100%);
+            --gradient-accent: linear-gradient(135deg, var(--cf-orange), var(--cf-cloud));
+            --shadow-glow: 0 0 60px rgba(243, 128, 32, 0.15);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --radius-xs: 6px;
+            --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ─── Animated Background ─── */
+        .bg-mesh {
+            position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background:
+                radial-gradient(ellipse 80% 60% at 20% 10%, rgba(243, 128, 32, 0.08) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(6, 182, 212, 0.05) 0%, transparent 50%),
+                radial-gradient(ellipse 50% 40% at 50% 50%, rgba(168, 85, 247, 0.04) 0%, transparent 50%);
+        }
+
+        .grid-overlay {
+            position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.04;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px);
+            background-size: 60px 60px;
+        }
+
+        /* ─── Layout ─── */
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+        /* ─── Top Navigation ─── */
+        .top-nav {
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(5, 5, 5, 0.85);
+            backdrop-filter: blur(20px) saturate(1.5);
+            border-bottom: 1px solid var(--border-glass);
+            padding: 0 24px;
+        }
+        .top-nav .inner {
+            max-width: 1400px; margin: 0 auto;
+            display: flex; align-items: center; justify-content: space-between;
+            height: 64px;
+        }
+        .logo-group { display: flex; align-items: center; gap: 12px; }
+        .logo-mark {
+            width: 36px; height: 36px; border-radius: 10px;
+            background: var(--gradient-accent);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; font-weight: 800; color: white;
+            box-shadow: 0 4px 16px rgba(243, 128, 32, 0.3);
+        }
+        .logo-text { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
+        .logo-text span { background: var(--gradient-accent); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+        .nav-links { display: flex; gap: 4px; }
+        .nav-links a {
+            color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 500;
+            padding: 8px 14px; border-radius: var(--radius-xs); transition: all 0.2s;
+        }
+        .nav-links a:hover, .nav-links a.active { color: var(--text-primary); background: var(--bg-glass); }
+
+        .status-pill {
+            display: flex; align-items: center; gap: 6px;
+            background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 6px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 500; color: var(--accent-emerald);
+        }
+        .status-dot {
+            width: 7px; height: 7px; border-radius: 50%; background: var(--accent-emerald);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.8); } }
+
+        /* ─── Hero Section ─── */
+        .hero {
+            padding: 80px 0 60px; text-align: center;
+            background: var(--gradient-hero);
+            position: relative; overflow: hidden;
+        }
+        .hero::after {
+            content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 120px;
+            background: linear-gradient(to top, var(--bg-primary), transparent);
+        }
+        .hero-badge {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: rgba(243, 128, 32, 0.1); border: 1px solid rgba(243, 128, 32, 0.2);
+            padding: 6px 16px; border-radius: 20px; font-size: 0.78rem; font-weight: 500;
+            color: var(--cf-orange); margin-bottom: 24px;
+            animation: fadeInUp 0.6s ease-out;
+        }
+        .hero h1 {
+            font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 800;
+            letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 16px;
+            animation: fadeInUp 0.6s ease-out 0.1s both;
+        }
+        .hero h1 .gradient {
+            background: var(--gradient-accent);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .hero p {
+            font-size: 1.1rem; color: var(--text-secondary); max-width: 600px; margin: 0 auto 32px;
+            line-height: 1.6; animation: fadeInUp 0.6s ease-out 0.2s both;
+        }
+
+        /* ─── Modules Grid (Edge, AI, R2, Realtime) ─── */
+        .modules-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;
+            margin-top: 40px;
+        }
+
+        .module-panel {
+            background: var(--gradient-card); border: 1px solid var(--border-glass);
+            border-radius: var(--radius); padding: 24px; position: relative; overflow: hidden;
+        }
+        .module-panel::before {
+            content:''; position: absolute; top:0; left:0; width: 4px; height: 100%;
+            background: var(--gradient-accent); opacity: 0.5;
+        }
+        
+        .module-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--border-glass); padding-bottom: 16px; }
+        .module-icon { font-size: 1.8rem; }
+        .module-title { font-size: 1.2rem; font-weight: 700; color: white; }
+        
+        /* AI Chat UI */
+        .chat-container { display: flex; flex-direction: column; gap: 12px; height: 300px; }
+        .chat-history { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 8px; }
+        .chat-bubble { padding: 12px 14px; border-radius: 12px; font-size: 0.9rem; max-width: 90%; line-height: 1.5; }
+        .chat-bubble.user { background: rgba(255, 255, 255, 0.05); align-self: flex-end; border-bottom-right-radius: 4px; }
+        .chat-bubble.ai { background: rgba(243, 128, 32, 0.1); border: 1px solid rgba(243, 128, 32, 0.2); align-self: flex-start; border-bottom-left-radius: 4px; color: #fff;}
+        .chat-bubble.ai span.source { display: block; font-size: 0.7rem; color: var(--cf-cloud); margin-top: 6px; font-family: var(--font-mono); }
+        .chat-form { display: flex; gap: 8px; }
+        .chat-input {
+            flex: 1; background: rgba(0,0,0,0.5); border: 1px solid var(--border-glass);
+            padding: 10px 14px; border-radius: var(--radius-sm); color: white; font-family: var(--font-body); outline: none; transition: border-color 0.2s;
+        }
+        .chat-input:focus { border-color: var(--cf-orange); }
+        .chat-btn { background: var(--gradient-accent); color: white; border: none; border-radius: var(--radius-sm); padding: 0 16px; cursor: pointer; font-weight: 600; }
+
+        /* Realtime Channels */
+        .channel-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+        .channel-item {
+            display: flex; justify-content: space-between; align-items: center;
+            background: rgba(255, 255, 255, 0.02); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-glass); transition: all 0.2s;
+        }
+        .channel-item:hover { background: rgba(255, 255, 255, 0.05); }
+        .channel-name { font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; }
+        .channel-name::before { content: '#'; color: var(--text-muted); font-weight: 400; }
+        .channel-users { font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-emerald); }
+
+        .log-box {
+            background: #000; border: 1px solid var(--border-glass); border-radius: var(--radius-sm);
+            padding: 12px; height: 160px; overflow-y: auto; font-family: var(--font-mono); font-size: 0.75rem;
+            color: var(--text-secondary); display: flex; flex-direction: column; gap: 6px;
+        }
+        .log-entry.connect { color: var(--accent-emerald); }
+        .log-entry.msg { color: var(--text-primary); }
+        .log-entry.typing { color: var(--accent-blue); font-style: italic; }
+
+        /* RadioLinc (R2 + Stream) */
+        .radiolinc-upload {
+            border: 2px dashed var(--border-glass); border-radius: var(--radius-sm);
+            padding: 32px 20px; text-align: center; cursor: pointer; transition: all 0.2s;
+            background: rgba(0,0,0,0.2); margin-bottom: 16px;
+        }
+        .radiolinc-upload:hover { border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.05); }
+        .radiolinc-icon { font-size: 2rem; margin-bottom: 8px; display: block; }
+        .radiolinc-text { font-size: 0.9rem; font-weight: 500; }
+        
+        .radiolinc-videos { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+        .video-card {
+            min-width: 140px; background: #000; border-radius: var(--radius-xs);
+            border: 1px solid var(--border-glass); overflow: hidden; position: relative;
+        }
+        .video-card img { width: 100%; height: 80px; object-fit: cover; opacity: 0.7; }
+        .video-card .play { position: absolute; top:50%; left:50%; transform: translate(-50%,-50%); font-size: 1.5rem; }
+        .video-card .title { font-size: 0.7rem; padding: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div class="bg-mesh"></div>
+    <div class="grid-overlay"></div>
+
+    <nav class="top-nav">
+        <div class="inner">
+            <div class="logo-group">
+                <div class="logo-mark">B</div>
+                <div class="logo-text"><span>Brain</span>SAIT</div>
+            </div>
+            <div class="nav-links">
+                <a href="#" class="active">Command Center</a>
+                <a href="https://sbs.brainsait.cloud" target="_blank">SBS Origin</a>
+            </div>
+            <div class="status-pill"><div class="status-dot"></div>Edge Operational</div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="container">
+            <div class="hero-badge">⚡ Cloudflare Edge Unified Portal v2.0</div>
+            <h1>Global Edge <br><span class="gradient">Command Center</span></h1>
+            <p>Leveraging Cloudflare Pages, Workers, D1, KV, Durable Objects, R2, and Workers AI to run the Smart Business Services platform seamlessly at the edge.</p>
+        </div>
+    </section>
+
+    <div class="container" style="padding-bottom: 80px;">
+        <div class="modules-grid">
+            
+            <!-- 🧠 Workers AI & AUTO-RAG -->
+            <div class="module-panel">
+                <div class="module-header">
+                    <span class="module-icon">🧠</span>
+                    <div>
+                        <div class="module-title">Workers AI AUTO-RAG</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted);">BGE-Base Emebeddings + LLaMA 3.1</div>
+                    </div>
+                </div>
+                <div class="chat-container">
+                    <div class="chat-history" id="ai-chat">
+                        <div class="chat-bubble ai">
+                            Hello! I am the BrainSAIT AI powered by LLaMA 3.1 on the edge. How can I help you with Saudi Billing System (SBS) or NPHIES guidelines?
+                        </div>
+                    </div>
+                    <form class="chat-form" id="ai-form">
+                        <input type="text" id="ai-input" class="chat-input" placeholder="Ask about NPHIES claims...">
+                        <button type="submit" class="chat-btn">Ask</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 🔴 Realtime Collaboration DO -->
+            <div class="module-panel">
+                <div class="module-header">
+                    <span class="module-icon">🔴</span>
+                    <div>
+                        <div class="module-title">Stakeholder Channels</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted);">Powered by Durable Objects & WebSockets</div>
+                    </div>
+                </div>
+                <div class="channel-list">
+                    <div class="channel-item">
+                        <span class="channel-name">claims-ops</span>
+                        <span class="channel-users"><span class="dot"></span> 12 active</span>
+                    </div>
+                    <div class="channel-item">
+                        <span class="channel-name">it-support</span>
+                        <span class="channel-users"><span class="dot"></span> 4 active</span>
+                    </div>
+                </div>
+                <div class="log-box" id="ws-logs">
+                    <div class="log-entry connect">[System] Connecting to Durable Object wss://portal...</div>
+                    <div class="log-entry connect">[System] Connected to RealtimeRoom channel.</div>
+                    <div class="log-entry msg">[Dr. Ahmed] Claim CLM-891X requires manual review.</div>
+                    <div class="log-entry typing">Sarah from Billing is typing...</div>
+                </div>
+            </div>
+
+            <!-- ☁️ RadioLinc R2 + Stream -->
+            <div class="module-panel">
+                <div class="module-header">
+                    <span class="module-icon">☁️</span>
+                    <div>
+                        <div class="module-title">RadioLinc Stream</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted);">R2 Object Storage + AI Image Classification</div>
+                    </div>
+                </div>
+                <div class="radiolinc-upload" onclick="alert('Choose a DICOM, X-Ray or CT Scan image to upload directly to R2 Storage.')">
+                    <span class="radiolinc-icon">📂</span>
+                    <span class="radiolinc-text">Click to upload Medical Image to R2</span>
+                    <div style="font-size: 0.75rem; color:var(--text-muted); margin-top:8px;">Auto-classified via ResNet-50 AI</div>
+                </div>
+                <div style="font-size:0.8rem; font-weight:600; margin-bottom:10px;">Recent Edge Streams</div>
+                <div class="radiolinc-videos">
+                    <div class="video-card">
+                        <div style="background:#111; height:80px; display:flex; align-items:center; justify-content:center;">🩻</div>
+                        <div class="play">▶</div>
+                        <div class="title">Chest_Xray_001.dcm</div>
+                    </div>
+                    <div class="video-card">
+                        <div style="background:#111; height:80px; display:flex; align-items:center; justify-content:center;">🧠</div>
+                        <div class="play">▶</div>
+                        <div class="title">Brain_MRI_Seq.dcm</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ⚡ D1 EDGE SQLITE -->
+            <div class="module-panel">
+                <div class="module-header">
+                    <span class="module-icon">🗄️</span>
+                    <div>
+                        <div class="module-title">D1 Global Database</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted);">Distributed edge SQLite with Queues</div>
+                    </div>
+                </div>
+                <div style="font-family: var(--font-mono); font-size: 0.8rem; background: rgba(0,0,0,0.5); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-glass);">
+                    <div style="color:var(--accent-cyan); margin-bottom:8px;">> SELECT * FROM claims LIMIT 3;</div>
+                    <div style="color:var(--text-secondary); margin-bottom:4px;">ID | PATIENT | STATUS</div>
+                    <div style="color:white; margin-bottom:4px;">CLM-2A9X | 10048... | QUEUED</div>
+                    <div style="color:white; margin-bottom:4px;">CLM-9B2F | 10091... | SUBMITTED</div>
+                    <div style="color:white;">CLM-4C7E | 10022... | NORMALIZING</div>
+                    <hr style="border:0; border-top:1px solid var(--border-glass); margin:12px 0;">
+                    <div style="color:var(--accent-emerald);">> Read latency: 1.2ms (Edge Cache)</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        // AI Chat UI Mock
+        const chatForm = document.getElementById('ai-form');
+        const chatInput = document.getElementById('ai-input');
+        const chatHistory = document.getElementById('ai-chat');
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = chatInput.value.trim();
+            if(!message) return;
+
+            // Add user bubble
+            const userBubble = document.createElement('div');
+            userBubble.className = 'chat-bubble user';
+            userBubble.textContent = message;
+            chatHistory.appendChild(userBubble);
+            chatInput.value = '';
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            // Wait 
+            setTimeout(() => {
+                const aiBubble = document.createElement('div');
+                aiBubble.className = 'chat-bubble ai';
+                aiBubble.innerHTML = `This involves the CHI prior authorization guidelines. Procedural code retrieved from D1 knowledge base indicates pre-approval is required. <span class="source">[Source: chi-guidelines via BGE-Base]</span>`;
+                chatHistory.appendChild(aiBubble);
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }, 1200);
+        });
+
+        // Simulate WebSocket connection
+        const wsBox = document.getElementById('ws-logs');
+        setInterval(() => {
+            const events = [
+                "Dr. Sarah finished reading Claim CLM-2A9X",
+                "Mohamed attached a PDF document to StakeholderChannel",
+                "Queue: Normalizer finished processing",
+                "D1 database synced globally"
+            ];
+            const evt = events[Math.floor(Math.random() * events.length)];
+            const div = document.createElement('div');
+            div.className = 'log-entry msg';
+            div.textContent = `[Live DO] ${evt}`;
+            wsBox.appendChild(div);
+            wsBox.scrollTop = wsBox.scrollHeight;
+        }, 5000);
+    </script>
+</body>
+</html>

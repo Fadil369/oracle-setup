@@ -108,6 +108,8 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "Patients, families, and guided front-desk journeys",
     kind: "primary",
     description: "BSMA is the patient front door for appointments, medical records, claims follow-up, and Arabic-first care communication across BrainSAIT.",
+    launchHref: "https://app.brainsait.org",
+    launchLabel: "Open BSMA",
     features: [
       "Patient-facing appointments, records, and claims access",
       "Arabic-first experience with guided digital journeys",
@@ -125,6 +127,8 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "Clinicians, nursing teams, and care coordinators",
     kind: "primary",
     description: "Provider-facing access to patient records, encounters, scheduling, and AI-assisted clinical operations.",
+    launchHref: "https://givc.brainsait.org",
+    launchLabel: "Open GIVC",
     features: [
       "Clinician and care-team operational workflows",
       "Care coordination with voice and AI support",
@@ -142,6 +146,8 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "RCM teams, coders, and billing operators",
     kind: "primary",
     description: "Payer-facing revenue cycle workflows for eligibility, coding quality, rejections, claim readiness, and reimbursement follow-up.",
+    launchHref: "https://sbs.brainsait.org",
+    launchLabel: "Open SBS",
     features: [
       "NPHIES-aware revenue workflows",
       "Claims scanner and rejection intelligence",
@@ -183,6 +189,8 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "Platform engineers, integration teams, and partner systems",
     kind: "support",
     description: "Unified healthcare and workflow APIs for FHIR, patient services, claims orchestration, and AI-driven platform tasks.",
+    launchHref: "https://api.brainsait.org",
+    launchLabel: "Open API Gateway",
     features: [
       "FHIR and healthcare integration endpoints",
       "Claim, patient, and workflow service surfaces",
@@ -200,6 +208,8 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "Internal AI agents, automation surfaces, and platform operators",
     kind: "support",
     description: "Model Context Protocol access for BrainSAIT agents, shared tools, orchestration routes, and controlled automation.",
+    launchHref: "https://mcp.brainsait.org",
+    launchLabel: "Open MCP Gateway",
     features: [
       "MASTERLINC and domain-specific agent surfaces",
       "Shared operational APIs for internal tooling",
@@ -217,6 +227,8 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "Hospital operations and branch administrators",
     kind: "support",
     description: "Zero-trust access to Oracle Oasis+ ERP across the hospital network with live operational monitoring.",
+    launchHref: "https://oasis.brainsait.org",
+    launchLabel: "Open Oasis+",
     features: [
       "Branch-aware Oracle and hospital access",
       "Cloudflare Tunnel-protected connectivity",
@@ -234,10 +246,31 @@ const EDGE_SERVICE_DIRECTORY = [
     audience: "Claims teams and Oracle-integrated automation",
     kind: "support",
     description: "Oracle Bridge sessions, claim scanning, medical records retrieval, and operational integration for hospital billing flows.",
+    launchHref: "https://oracle.brainsait.org",
+    launchLabel: "Open Oracle Gateway",
     features: [
       "Server-side Oracle session handling",
       "Scanner telemetry into the Control Tower",
       "Bridged labs, radiology, documents, and claims data",
+    ],
+  },
+  {
+    path: "/simulation",
+    slug: "simulation",
+    tone: "gold",
+    shortName: "Sim",
+    title: "Simulated Hospital",
+    host: "simulation.brainsait.org",
+    category: "Agentic simulation",
+    audience: "LINC agents, platform engineers, and training operators",
+    kind: "support",
+    description: "Digital twin hospital environment used to train and validate LINC agents across virtual care, insurance, pharmacy, and radiology flows.",
+    launchHref: "https://simulation.brainsait.org",
+    launchLabel: "Open simulation",
+    features: [
+      "Virtual patients and clinician workflows",
+      "Virtual insurance, pharmacy, and radiology modules",
+      "Safe validation environment for MCP-connected agents",
     ],
   },
   {
@@ -298,6 +331,65 @@ const EDGE_SERVICE_ROUTE_MAP = new Map(
     [service.path, ...(service.aliases || [])].map((path) => [path, service]),
   ),
 );
+
+const PLATFORM_VERSION = "5.0.0";
+
+const COMPLIANCE_PROFILE = Object.freeze({
+  hipaa: true,
+  pdpl: true,
+  nphies: true,
+  fhir_r4: true,
+});
+
+const MCP_AGENT_NETWORK = Object.freeze([
+  "MASTERLINC",
+  "ClaimLinc",
+  "PolicyLinc",
+  "ClinicalLinc",
+  "TTLINC",
+  "RadioLinc",
+  "ComplianceLinc",
+  "Basma",
+]);
+
+const PORTAL_STACK_LAYERS = Object.freeze([
+  {
+    label: "Edge",
+    title: "Cloudflare Edge Gateway",
+    detail: "The public portal router, control-tower views, and health surfaces are served from Cloudflare Workers at the platform edge.",
+    outcome: "Global entry routing with zero-trust delivery.",
+  },
+  {
+    label: "BOS",
+    title: "BrainSAIT Operating System",
+    detail: "BOS coordinates orchestration, control-tower state, routing intent, and safe operational policy across BrainSAIT surfaces.",
+    outcome: "One orchestration plane for healthcare workflows.",
+  },
+  {
+    label: "MCP",
+    title: "MCP Agent Network",
+    detail: "MASTERLINC and domain agents connect through the MCP gateway for controlled tool access, context exchange, and monitored automation.",
+    outcome: "Shared agent intelligence without breaking governance boundaries.",
+  },
+  {
+    label: "BOT",
+    title: "BrainSAIT Operational Tools",
+    detail: "BOT automates claims follow-up, runbook execution, operational triage, and service-to-service coordination for live healthcare estates.",
+    outcome: "Operational actions move from manual to repeatable automation.",
+  },
+  {
+    label: "Oracle",
+    title: "Oracle Hospital Gateway",
+    detail: "Oracle Oasis and branch portals stay connected through the existing Cloudflare tunnel and branch probing model already used by the worker.",
+    outcome: "Hospital access remains stable and branch-aware.",
+  },
+  {
+    label: "Sim",
+    title: "Agentic Simulated Hospital",
+    detail: "A digital twin environment validates LINC agents against virtual patients, doctors, insurance, pharmacy, and radiology flows before live rollout.",
+    outcome: "Safe rehearsal for agentic healthcare automation.",
+  },
+]);
 
 const CONTROL_TOWER_LAYERS = [
   {
@@ -2218,12 +2310,17 @@ export default {
       });
     }
 
-    // Simple liveness (no probing — instant response)
+    // Platform health metadata. Preserve text/plain for simple legacy probes.
     if (path === "/health") {
-      return new Response("ok", {
-        status: 200,
-        headers: { "Content-Type": "text/plain", ...SEC_HEADERS },
-      });
+      const accept = request.headers.get("Accept") || "";
+      if (accept.includes("text/plain")) {
+        return new Response("ok", {
+          status: 200,
+          headers: { "Content-Type": "text/plain;charset=utf-8", "Cache-Control": "no-store", ...SEC_HEADERS },
+        });
+      }
+
+      return json(buildPlatformHealthPayload(), 200, { request, env });
     }
 
     if (path === "/robots.txt") {
@@ -2458,6 +2555,12 @@ export default {
       const health = await probeAllBranches();
       const online = Object.values(health).filter(h => h.online).length;
       return json({
+        ...buildPlatformHealthPayload({
+          status: online === BRANCHES.length ? "operational" : (online > 0 ? "degraded" : "outage"),
+          hospitalsOnline: online,
+          hospitalsTotal: BRANCHES.length,
+          timestamp: new Date().toISOString(),
+        }),
         timestamp: new Date().toISOString(),
         summary:   { total: BRANCHES.length, online, offline: BRANCHES.length - online },
         branches:  health,
@@ -2494,6 +2597,8 @@ export default {
 
     if (
       path === "/"
+      || path === "/index"
+      || path === "/index.html"
       || path === "/status"
       || path === "/control-tower"
       || EDGE_SERVICE_ROUTE_MAP.has(path)
@@ -2754,34 +2859,100 @@ function normalizePath(pathname) {
 }
 
 function buildInfrastructureSnapshot(snapshot) {
+  const liveSummary = snapshot.summary || {};
   return {
     timestamp: snapshot.timestamp,
+    version: PLATFORM_VERSION,
     company: INFRASTRUCTURE_REFERENCE.company,
     operations: INFRASTRUCTURE_REFERENCE.operations,
     cloudflareAccountId: INFRASTRUCTURE_REFERENCE.cloudflareAccountId,
     oid: INFRASTRUCTURE_REFERENCE.oid,
     primaryDomain: INFRASTRUCTURE_REFERENCE.primaryDomain,
     referenceDomains: INFRASTRUCTURE_REFERENCE.referenceDomains,
+    edgeModel: INFRASTRUCTURE_REFERENCE.edgeModel,
     inventory: {
       workers: INFRASTRUCTURE_REFERENCE.activeWorkers,
       d1Databases: INFRASTRUCTURE_REFERENCE.d1Databases,
       kvNamespaces: INFRASTRUCTURE_REFERENCE.kvNamespaces,
+      hospitalBranches: BRANCHES.length,
+      agents: MCP_AGENT_NETWORK.length,
     },
     networkStack: INFRASTRUCTURE_REFERENCE.networkStack,
+    platformLayers: {
+      bos: "BrainSAIT Operating System orchestration layer",
+      bot: "BrainSAIT Operational Tools automation layer",
+      mcpGateway: "https://mcp.brainsait.org",
+      simulatedHospital: "https://simulation.brainsait.org",
+    },
+    agentNetwork: MCP_AGENT_NETWORK,
+    stackLayers: PORTAL_STACK_LAYERS,
+    compliance: COMPLIANCE_PROFILE,
     serviceDirectory: EDGE_SERVICE_DIRECTORY.map((service) => ({
       aliases: service.aliases || [],
       audience: service.audience,
       category: service.category,
       description: service.description,
       features: service.features,
+      launchHref: service.launchHref || null,
+      launchLabel: service.launchLabel || null,
       path: service.path,
       kind: service.kind || "support",
       slug: service.slug,
+      shortName: service.shortName,
       title: service.title,
       host: service.host,
+      tone: service.tone || "white",
+      relatedLinks: service.relatedLinks || [],
     })),
-    liveSummary: snapshot.summary,
+    liveSummary,
   };
+}
+
+function derivePlatformStatus(summary = {}) {
+  const hospitals = summary.hospitals || {};
+  const externalServices = summary.externalServices || {};
+  const platformApps = summary.platformApps || {};
+  const actions = summary.actions || {};
+
+  const hospitalOffline = Math.max(0, (hospitals.total || 0) - (hospitals.online || 0));
+  const externalCritical = externalServices.critical || 0;
+  const appCritical = platformApps.critical || 0;
+  const criticalActions = actions.critical || 0;
+
+  if (hospitalOffline === 0 && externalCritical === 0 && appCritical === 0 && criticalActions === 0) {
+    return "operational";
+  }
+
+  if ((hospitals.online || 0) > 0 || (externalServices.online || 0) > 0 || (platformApps.live || 0) > 0) {
+    return "degraded";
+  }
+
+  return "outage";
+}
+
+function buildPlatformHealthPayload(options = {}) {
+  const timestamp = options.timestamp || new Date().toISOString();
+  const hospitalsTotal = Number.isFinite(options.hospitalsTotal) ? options.hospitalsTotal : BRANCHES.length;
+  const payload = {
+    platform: "BrainSAIT eCarePlus",
+    version: PLATFORM_VERSION,
+    status: options.status || "operational",
+    agents: MCP_AGENT_NETWORK.length,
+    hospitals: hospitalsTotal,
+    compliance: COMPLIANCE_PROFILE,
+    agentGateway: "https://mcp.brainsait.org",
+    timestamp,
+  };
+
+  if (Number.isFinite(options.hospitalsOnline)) {
+    payload.summary = {
+      total: hospitalsTotal,
+      online: options.hospitalsOnline,
+      offline: Math.max(0, hospitalsTotal - options.hospitalsOnline),
+    };
+  }
+
+  return payload;
 }
 
 function renderSitemapXml() {
@@ -2802,664 +2973,898 @@ ${urls.map((path) => `  <url><loc>https://brainsait.org${path}</loc></url>`).joi
 </urlset>`;
 }
 
-function renderServiceEntryPage(service, snapshot) {
-  const summary = buildInfrastructureSnapshot(snapshot);
-  const primaryHref = service.launchHref || null;
-  const primaryLabel = service.launchLabel || `Open ${service.shortName}`;
-  const relatedLinks = service.relatedLinks || [];
-  const routes = [service.path, ...(service.aliases || [])];
+function getDesignSystem() {
+  return `
+    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtmlText(service.title)} · BrainSAIT</title>
-<meta name="description" content="${escapeHtmlText(service.description)}">
-</head>
-<body style="margin:0;font-family:Inter,system-ui,sans-serif;background:#07111a;color:#edf8f6;">
-  <main style="max-width:960px;margin:0 auto;padding:32px 16px 48px;">
-    <a href="/" style="color:#52e2c6;text-decoration:none;">BrainSAIT.org</a>
-    <section style="margin-top:18px;padding:28px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.88);">
-      <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start;">
-        <div>
-          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:.78rem;color:#98a8c7;">${escapeHtmlText(service.category)}</div>
-          <h1 style="margin:10px 0 12px;font-size:clamp(2rem,6vw,3.4rem);line-height:1;">${escapeHtmlText(service.title)}</h1>
-          <p style="margin:0;max-width:60ch;color:#98a8c7;line-height:1.7;">${escapeHtmlText(service.description)}</p>
-        </div>
-        <div style="padding:10px 14px;border-radius:999px;background:rgba(82,226,198,.1);border:1px solid rgba(82,226,198,.18);color:#52e2c6;">${escapeHtmlText(service.path)}</div>
-      </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:22px;">
-        ${primaryHref ? `<a href="${escapeHtmlText(primaryHref)}"${primaryHref.startsWith("http") ? ` target="_blank" rel="noopener noreferrer"` : ""} style="display:inline-flex;padding:14px 18px;border-radius:16px;background:#f5c76b;color:#111827;font-weight:700;text-decoration:none;">${escapeHtmlText(primaryLabel)}</a>` : ""}
-        <a href="/status" style="display:inline-flex;padding:14px 18px;border-radius:16px;border:1px solid rgba(103,181,255,.24);background:rgba(103,181,255,.08);color:#dbe7ff;text-decoration:none;">View public status</a>
-        <a href="/control-tower" style="display:inline-flex;padding:14px 18px;border-radius:16px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);color:#edf8f6;text-decoration:none;">Open control tower</a>
-      </div>
-    </section>
-    <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:18px;">
-      <article style="padding:20px;border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);">
-        <div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">Audience</div>
-        <strong style="display:block;margin-top:8px;">${escapeHtmlText(service.audience)}</strong>
-      </article>
-      <article style="padding:20px;border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);">
-        <div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">Platform lane</div>
-        <strong style="display:block;margin-top:8px;">${escapeHtmlText(service.category)}</strong>
-      </article>
-      <article style="padding:20px;border-radius:20px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);">
-        <div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">Entry routes</div>
-        <strong style="display:block;margin-top:8px;">${escapeHtmlText(routes.join(" · "))}</strong>
-      </article>
-    </section>
-    ${relatedLinks.length ? `
-    <section style="margin-top:18px;padding:24px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.82);">
-      <h2 style="margin:0 0 12px;">Connected services</h2>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;">
-        ${relatedLinks.map((link) => `<a href="${escapeHtmlText(link.href)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;padding:14px 18px;border-radius:16px;border:1px solid rgba(103,181,255,.24);background:rgba(103,181,255,.08);color:#dbe7ff;text-decoration:none;">${escapeHtmlText(link.label)}</a>`).join("")}
-      </div>
-    </section>` : ""}
-    <section style="margin-top:18px;padding:24px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.82);">
-      <h2 style="margin:0 0 14px;">Service highlights</h2>
-      <ul style="margin:0;padding-left:20px;color:#98a8c7;line-height:1.8;">
-        ${service.features.map((feature) => `<li>${escapeHtmlText(feature)}</li>`).join("")}
-      </ul>
-    </section>
-  </main>
-</body>
-</html>`;
-}
-
-function renderStatusPage(snapshot) {
-  const infra = buildInfrastructureSnapshot(snapshot);
-  const summary = snapshot.summary || {};
-  const hospitals = summary.hospitals || {};
-  const external = summary.externalServices || {};
-  const platform = summary.platformApps || {};
-  const actions = summary.actions || {};
-
-  const cards = [
-    { label: "Hospitals online", value: formatRatio(hospitals.online, hospitals.total, "online"), detail: `${formatPercent(hospitals.availabilityPct)} availability` },
-    { label: "External services", value: formatRatio(external.online, external.total, "reachable"), detail: `Avg latency ${formatLatency(external.avgLatencyMs)}` },
-    { label: "Platform apps", value: `${platform.live || 0}/${platform.total || 0} live`, detail: `${platform.critical || 0} critical attention` },
-    { label: "Priority actions", value: `${actions.total || 0} active`, detail: `${actions.critical || 0} critical · ${actions.high || 0} high` },
-  ];
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BrainSAIT Status</title>
-</head>
-<body style="margin:0;font-family:Inter,system-ui,sans-serif;background:#050816;color:#e5eefc;">
-  <main style="max-width:1120px;margin:0 auto;padding:32px 16px 56px;">
-    <a href="/" style="color:#52e2c6;text-decoration:none;">Back to brainsait.org</a>
-    <section style="margin-top:18px;padding:28px;border-radius:28px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.86);">
-      <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-        <div>
-          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:.78rem;color:#52e2c6;">Public operations</div>
-          <h1 style="margin:12px 0;font-size:clamp(2rem,6vw,3.6rem);line-height:1;">BrainSAIT platform status</h1>
-          <p style="margin:0;max-width:62ch;color:#98a8c7;line-height:1.7;">This public operations view reflects the same live control-tower snapshot used by the operator dashboard, summarized for safe external visibility.</p>
-        </div>
-        <div style="padding:10px 14px;border-radius:999px;background:rgba(82,226,198,.1);border:1px solid rgba(82,226,198,.18);color:#52e2c6;">Updated ${escapeHtmlText(String(snapshot.timestamp).replace("T", " ").slice(0, 16))} UTC</div>
-      </div>
-    </section>
-    <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px;">
-      ${cards.map((card) => `<article style="padding:20px;border-radius:22px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.03);"><div style="color:#98a8c7;text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;">${escapeHtmlText(card.label)}</div><div style="margin:10px 0 8px;font-size:1.9rem;font-weight:800;">${escapeHtmlText(card.value)}</div><div style="color:#98a8c7;">${escapeHtmlText(card.detail)}</div></article>`).join("")}
-    </section>
-    <section style="margin-top:18px;padding:24px;border-radius:24px;border:1px solid rgba(148,163,184,.18);background:rgba(10,17,35,.82);">
-      <h2 style="margin:0 0 12px;">Infrastructure reference</h2>
-      <p style="margin:0;color:#98a8c7;line-height:1.7;">${escapeHtmlText(infra.edgeModel)}</p>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px;">
-        <article style="padding:18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.14);"><strong>${escapeHtmlText(String(infra.inventory.workers))}</strong><div style="color:#98a8c7;margin-top:6px;">Cloudflare Workers</div></article>
-        <article style="padding:18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.14);"><strong>${escapeHtmlText(String(infra.inventory.d1Databases))}</strong><div style="color:#98a8c7;margin-top:6px;">D1 databases</div></article>
-        <article style="padding:18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.14);"><strong>${escapeHtmlText(String(infra.inventory.kvNamespaces))}</strong><div style="color:#98a8c7;margin-top:6px;">KV namespaces</div></article>
-      </div>
-    </section>
-  </main>
-</body>
-</html>`;
-}
-
-function renderLandingPage(snapshot) {
-  const renderedAt = new Date(snapshot.timestamp);
-  const summary = snapshot.summary || {};
-  const hospitalSummary = summary.hospitals || {};
-  const externalSummary = summary.externalServices || {};
-  const platformSummary = summary.platformApps || {};
-  const claimsSummary = summary.claims || {};
-  const actionSummary = summary.actions || {};
-  const overallSummary = summary.overall || {};
-
-  const escapeHtml = escapeHtmlText;
-
-  const primaryRouteCards = EDGE_SERVICE_DIRECTORY.filter((service) => service.kind === "primary").map((service) => ({
-    tone: service.tone,
-    href: service.path,
-    url: `brainsait.org${service.path}`,
-    label: service.category,
-    name: service.title,
-    description: service.description,
-    features: service.features,
-    aliases: service.aliases || [],
-  }));
-
-  const supportRouteCards = EDGE_SERVICE_DIRECTORY.filter((service) => service.kind !== "primary").map((service) => ({
-    tone: service.tone,
-    href: service.path,
-    url: `brainsait.org${service.path}`,
-    label: service.category,
-    name: service.title,
-    description: service.description,
-    features: service.features,
-  }));
-
-  const liveMetrics = [
-    {
-      label: "Hospital Network",
-      value: formatRatio(hospitalSummary.online, hospitalSummary.total, "online"),
-      detail: `${formatPercent(hospitalSummary.availabilityPct)} availability`,
-    },
-    {
-      label: "External Services",
-      value: formatRatio(externalSummary.online, externalSummary.total, "reachable"),
-      detail: `Avg latency ${formatLatency(externalSummary.avgLatencyMs)}`,
-    },
-    {
-      label: "Platform Apps",
-      value: `${platformSummary.live || 0}/${platformSummary.total || 0} live services`,
-      detail: `${platformSummary.critical || 0} critical attention`,
-    },
-    {
-      label: "Claims Engine",
-      value: `${claimsSummary.readyClaims || 0} ready`,
-      detail: `${claimsSummary.blockedClaims || 0} blocked service items`,
-    },
-    {
-      label: "Action Queue",
-      value: `${actionSummary.total || 0} active`,
-      detail: `${actionSummary.critical || 0} critical · ${actionSummary.high || 0} high`,
-    },
-    {
-      label: "Avg Latency",
-      value: formatLatency(overallSummary.avgLatencyMs),
-      detail: `${overallSummary.monitoredEndpoints || 0} monitored endpoints`,
-    },
-  ];
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>BrainSAIT eCarePlus</title>
-<meta name="description" content="BrainSAIT eCarePlus — patient-first healthcare access across BSMA, GIVC, SBS, and Saudi government exchange lanes, all connected to Oracle and Oasis+ backend operations.">
-<meta property="og:title" content="BrainSAIT eCarePlus">
-<meta property="og:description" content="Patient, provider, payer, and government healthcare interfaces connected to BrainSAIT's Oracle and Oasis+ operational backbone.">
-<meta property="og:url" content="https://brainsait.org">
-<link rel="canonical" href="https://brainsait.org">
-<style>
-  @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap");
-  :root {
-    --bg: #050816;
-    --panel: rgba(10, 17, 35, 0.82);
-    --panel-strong: rgba(11, 18, 42, 0.94);
-    --line: rgba(148, 163, 184, 0.18);
-    --text: #e5eefc;
-    --muted: #98a8c7;
-    --gold: #f5c76b;
-    --blue: #67b5ff;
-    --teal: #52e2c6;
-    --white: #dbe7ff;
-    --shadow: 0 40px 120px rgba(0, 0, 0, 0.35);
-    --radius-xl: 32px;
-    --radius-lg: 24px;
-    --radius-md: 18px;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    color: var(--text);
-    font-family: "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
-    background:
-      radial-gradient(circle at top left, rgba(103, 181, 255, 0.20), transparent 30%),
-      radial-gradient(circle at top right, rgba(82, 226, 198, 0.16), transparent 32%),
-      linear-gradient(180deg, #040714 0%, #08101f 45%, #050816 100%);
-  }
-  a { color: inherit; text-decoration: none; }
-  .page { width: min(1200px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 60px; }
-  .nav, .hero, .metrics, .layers, .footer {
-    border: 1px solid var(--line);
-    background: var(--panel);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(18px);
-  }
-  .nav {
-    border-radius: 999px;
-    padding: 14px 18px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    position: sticky;
-    top: 16px;
-    z-index: 10;
-  }
-  .nav-brand { display: flex; align-items: center; gap: 14px; }
-  .nav-logo {
-    width: 44px;
-    height: 44px;
-    border-radius: 16px;
-    display: grid;
-    place-items: center;
-    background: linear-gradient(135deg, rgba(245, 199, 107, 0.25), rgba(82, 226, 198, 0.2));
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    font-weight: 800;
-    color: var(--gold);
-  }
-  .nav-name { font-size: 1rem; font-weight: 700; }
-  .nav-sub { font-size: 0.82rem; color: var(--muted); }
-  .nav-links { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .nav-link { color: var(--muted); font-size: 0.92rem; }
-  .nav-link:hover { color: var(--text); }
-  .nav-cta {
-    padding: 10px 16px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, rgba(245, 199, 107, 0.24), rgba(103, 181, 255, 0.16));
-    border: 1px solid rgba(245, 199, 107, 0.28);
-    font-weight: 600;
-  }
-  .hero {
-    margin-top: 22px;
-    border-radius: var(--radius-xl);
-    padding: 38px;
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
-    gap: 28px;
-  }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    border-radius: 999px;
-    border: 1px solid rgba(82, 226, 198, 0.22);
-    background: rgba(82, 226, 198, 0.08);
-    color: var(--teal);
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-  .hero h1 {
-    margin: 20px 0 14px;
-    font-size: clamp(2.6rem, 7vw, 4.8rem);
-    line-height: 0.97;
-    letter-spacing: -0.04em;
-  }
-  .hero p {
-    margin: 0;
-    color: var(--muted);
-    font-size: 1.05rem;
-    line-height: 1.7;
-    max-width: 62ch;
-  }
-  .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 28px; }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-width: 170px;
-    padding: 14px 18px;
-    border-radius: 16px;
-    border: 1px solid transparent;
-    font-weight: 700;
-  }
-  .btn-primary { background: linear-gradient(135deg, #f5c76b, #ddb157); color: #111827; }
-  .btn-secondary {
-    border-color: rgba(103, 181, 255, 0.24);
-    background: rgba(103, 181, 255, 0.08);
-    color: var(--white);
-  }
-  .hero-card {
-    border-radius: var(--radius-lg);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: var(--panel-strong);
-    padding: 24px;
-    display: grid;
-    gap: 16px;
-    align-content: start;
-  }
-  .hero-card h2 { margin: 0; font-size: 1.1rem; }
-  .hero-list { display: grid; gap: 12px; }
-  .hero-list-item {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 14px;
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-  }
-  .hero-list-item strong { font-size: 0.96rem; }
-  .hero-list-item span { color: var(--muted); font-size: 0.88rem; text-align: right; }
-  .status-strip {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 22px;
-  }
-  .status-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--muted);
-    font-size: 0.88rem;
-  }
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--teal);
-    box-shadow: 0 0 0 6px rgba(82, 226, 198, 0.1);
-  }
-  .section-head {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: 16px;
-    margin: 34px 0 18px;
-  }
-  .section-head h2 {
-    margin: 0;
-    font-size: clamp(1.6rem, 3vw, 2.4rem);
-    letter-spacing: -0.03em;
-  }
-  .section-head p { margin: 0; color: var(--muted); max-width: 54ch; }
-  .routes {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
-  }
-  .route-card {
-    min-height: 260px;
-    border-radius: var(--radius-lg);
-    padding: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: linear-gradient(180deg, rgba(11, 18, 42, 0.92), rgba(8, 13, 30, 0.95));
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    transition: transform 160ms ease, border-color 160ms ease;
-  }
-  .route-card:hover { transform: translateY(-4px); border-color: rgba(255, 255, 255, 0.18); }
-  .route-card.gold { box-shadow: inset 0 0 0 1px rgba(245, 199, 107, 0.18); }
-  .route-card.blue { box-shadow: inset 0 0 0 1px rgba(103, 181, 255, 0.18); }
-  .route-card.teal { box-shadow: inset 0 0 0 1px rgba(82, 226, 198, 0.18); }
-  .route-card.white { box-shadow: inset 0 0 0 1px rgba(219, 231, 255, 0.18); }
-  .route-card .tone { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
-  .route-card h3 { margin: 0; font-size: 1.5rem; }
-  .route-card p { margin: 0; color: var(--muted); line-height: 1.7; }
-  .feature-list { display: grid; gap: 10px; margin-top: auto; }
-  .feature-item { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 0.95rem; }
-  .feature-dot { width: 8px; height: 8px; border-radius: 999px; }
-  .feature-dot.gold { background: var(--gold); }
-  .feature-dot.blue { background: var(--blue); }
-  .feature-dot.teal { background: var(--teal); }
-  .feature-dot.white { background: var(--white); }
-  .card-footer {
-    margin-top: 8px;
-    padding-top: 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 0.9rem;
-  }
-  .metrics {
-    margin-top: 18px;
-    border-radius: var(--radius-xl);
-    padding: 28px;
-  }
-  .metric-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
-  }
-  .metric-tile {
-    border-radius: var(--radius-md);
-    padding: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.03);
-  }
-  .metric-label { color: var(--muted); font-size: 0.84rem; text-transform: uppercase; letter-spacing: 0.12em; }
-  .metric-value { margin: 10px 0 8px; font-size: 1.9rem; font-weight: 800; letter-spacing: -0.04em; }
-  .metric-detail { color: var(--muted); font-size: 0.92rem; }
-  .layers {
-    margin-top: 18px;
-    border-radius: var(--radius-xl);
-    padding: 28px;
-  }
-  .layer-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 16px;
-  }
-  .layer-card {
-    border-radius: var(--radius-md);
-    padding: 22px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-  }
-  .layer-card span {
-    color: var(--teal);
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-  .layer-card h3 { margin: 12px 0 10px; font-size: 1.05rem; }
-  .layer-card p { margin: 0; color: var(--muted); line-height: 1.65; }
-  .layer-card strong {
-    display: block;
-    margin-top: 14px;
-    color: var(--white);
-    font-size: 0.92rem;
-  }
-  .footer {
-    margin-top: 18px;
-    border-radius: var(--radius-xl);
-    padding: 24px 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    flex-wrap: wrap;
-  }
-  .footer-links { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); }
-  .footer-links a:hover { color: var(--text); }
-  .footer-meta { color: var(--muted); font-size: 0.9rem; }
-  @media (max-width: 980px) {
-    .hero, .routes, .metric-grid, .layer-grid { grid-template-columns: 1fr; }
-    .nav {
-      border-radius: 24px;
-      align-items: flex-start;
-      flex-direction: column;
+    :root {
+      --bs-void: #050810;
+      --bs-deep: #0a0e1a;
+      --bs-navy: #0f1629;
+      --bs-surface: #141b2d;
+      --bs-card: #1a2236;
+      --bs-border: rgba(255,255,255,0.06);
+      --bs-border-glow: rgba(212,165,116,0.15);
+      --bs-gold: #d4a574;
+      --bs-gold-bright: #e8c49a;
+      --bs-teal: #0ea5e9;
+      --bs-teal-dim: rgba(14,165,233,0.15);
+      --bs-medical: #2b6cb8;
+      --bs-emerald: #10b981;
+      --bs-rose: #f43f5e;
+      --bs-amber: #f59e0b;
+      --bs-text: #e2e8f0;
+      --bs-text-dim: #94a3b8;
+      --bs-text-muted: #64748b;
+      --bs-glass: rgba(20,27,45,0.7);
+      --bs-glass-hover: rgba(26,34,54,0.85);
+      --bs-radius: 16px;
+      --bs-radius-sm: 10px;
+      --bs-radius-xs: 6px;
+      --bs-font-display: 'Syne', sans-serif;
+      --bs-font-arabic: 'IBM Plex Sans Arabic', sans-serif;
+      --bs-font-mono: 'JetBrains Mono', monospace;
+      --bs-font-body: 'IBM Plex Sans Arabic', 'Syne', sans-serif;
+      --bs-shadow: 0 4px 30px rgba(0,0,0,0.4);
+      --bs-shadow-glow: 0 0 40px rgba(212,165,116,0.08);
     }
-  }
-  @media (max-width: 640px) {
-    .page { width: min(100% - 24px, 1200px); padding-bottom: 40px; }
-    .hero, .metrics, .layers, .footer { padding: 22px; }
-    .hero h1 { font-size: 2.4rem; }
-    .btn { width: 100%; }
-    .hero-actions { flex-direction: column; }
-  }
-</style>
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      background: var(--bs-void);
+      color: var(--bs-text);
+      font-family: var(--bs-font-body);
+      font-size: 15px;
+      line-height: 1.65;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    /* ─── Particle Canvas ─── */
+    #particle-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* ─── Ambient Glow Orbs ─── */
+    .ambient-orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.12;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .orb-gold { width: 500px; height: 500px; background: var(--bs-gold); top: -10%; right: -5%; animation: orbFloat 25s ease-in-out infinite; }
+    .orb-teal { width: 400px; height: 400px; background: var(--bs-teal); bottom: 10%; left: -8%; animation: orbFloat 30s ease-in-out infinite reverse; }
+    .orb-medical { width: 350px; height: 350px; background: var(--bs-medical); top: 50%; right: 30%; animation: orbFloat 20s ease-in-out infinite 5s; }
+
+    @keyframes orbFloat {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      25% { transform: translate(30px, -40px) scale(1.1); }
+      50% { transform: translate(-20px, 20px) scale(0.95); }
+      75% { transform: translate(15px, 30px) scale(1.05); }
+    }
+
+    /* ─── Layout ─── */
+    .page-wrapper {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .container-wide {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Top Bar ─── */
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+      background: rgba(5,8,16,0.75);
+      border-bottom: 1px solid var(--bs-border);
+      padding: 0 24px;
+    }
+    .top-bar-inner {
+      max-width: 1440px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+    }
+    .top-bar-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--bs-text);
+    }
+    .brand-mark {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, var(--bs-gold), var(--bs-teal));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--bs-font-display);
+      font-weight: 800;
+      font-size: 16px;
+      color: var(--bs-void);
+    }
+    .brand-text {
+      font-family: var(--bs-font-display);
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.5px;
+    }
+    .brand-dot {
+      color: var(--bs-gold);
+      font-size: 11px;
+      margin-left: 6px;
+      opacity: 0.7;
+    }
+    .top-bar-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .top-bar-nav a {
+      color: var(--bs-text-dim);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: var(--bs-radius-xs);
+      transition: all 0.2s;
+      font-family: var(--bs-font-display);
+      letter-spacing: 0.3px;
+    }
+    .top-bar-nav a:hover { color: var(--bs-gold-bright); background: rgba(212,165,116,0.06); }
+    .top-bar-nav a.active { color: var(--bs-gold); background: rgba(212,165,116,0.1); }
+
+    @media (max-width: 768px) {
+      .top-bar-nav { display: none; }
+    }
+
+    /* ─── Hero ─── */
+    .hero {
+      padding: 100px 0 60px;
+      position: relative;
+    }
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      background: rgba(212,165,116,0.08);
+      border: 1px solid rgba(212,165,116,0.15);
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--bs-gold);
+      font-family: var(--bs-font-display);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+      animation: fadeSlideUp 0.6s ease-out;
+    }
+    .hero-badge .pulse-dot {
+      width: 6px; height: 6px;
+      background: var(--bs-emerald);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    .hero h1 {
+      font-family: var(--bs-font-display);
+      font-size: clamp(36px, 5vw, 64px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -1px;
+      margin-bottom: 24px;
+      animation: fadeSlideUp 0.6s ease-out 0.1s both;
+    }
+    .hero h1 .gold { color: var(--bs-gold); }
+    .hero h1 .teal { color: var(--bs-teal); }
+    .hero-sub {
+      font-size: 17px;
+      color: var(--bs-text-dim);
+      max-width: 680px;
+      line-height: 1.75;
+      margin-bottom: 40px;
+      animation: fadeSlideUp 0.6s ease-out 0.2s both;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      animation: fadeSlideUp 0.6s ease-out 0.3s both;
+    }
+
+    /* ─── Buttons ─── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: var(--bs-radius-sm);
+      font-family: var(--bs-font-display);
+      font-weight: 600;
+      font-size: 14px;
+      text-decoration: none;
+      transition: all 0.3s;
+      cursor: pointer;
+      border: none;
+      letter-spacing: 0.3px;
+    }
+    .btn-gold {
+      background: linear-gradient(135deg, var(--bs-gold), #c4955a);
+      color: var(--bs-void);
+      box-shadow: 0 4px 20px rgba(212,165,116,0.25);
+    }
+    .btn-gold:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(212,165,116,0.35);
+    }
+    .btn-outline {
+      background: transparent;
+      color: var(--bs-text-dim);
+      border: 1px solid var(--bs-border);
+    }
+    .btn-outline:hover {
+      color: var(--bs-gold-bright);
+      border-color: rgba(212,165,116,0.3);
+      background: rgba(212,165,116,0.04);
+    }
+    .btn-teal {
+      background: linear-gradient(135deg, var(--bs-teal), #0284c7);
+      color: white;
+      box-shadow: 0 4px 20px rgba(14,165,233,0.2);
+    }
+    .btn-teal:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(14,165,233,0.3);
+    }
+
+    /* ─── Section Headers ─── */
+    .section {
+      padding: 80px 0;
+    }
+    .section-label {
+      font-family: var(--bs-font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--bs-gold);
+      margin-bottom: 12px;
+      opacity: 0.8;
+    }
+    .section-title {
+      font-family: var(--bs-font-display);
+      font-size: clamp(24px, 3vw, 36px);
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+    .section-desc {
+      color: var(--bs-text-dim);
+      max-width: 600px;
+      font-size: 15px;
+      line-height: 1.7;
+      margin-bottom: 48px;
+    }
+
+    /* ─── Glass Cards ─── */
+    .glass-card {
+      background: var(--bs-glass);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--bs-border);
+      border-radius: var(--bs-radius);
+      padding: 28px;
+      transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+    .glass-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(212,165,116,0.2), transparent);
+      opacity: 0;
+      transition: opacity 0.35s;
+    }
+    .glass-card:hover {
+      border-color: var(--bs-border-glow);
+      transform: translateY(-4px);
+      box-shadow: var(--bs-shadow-glow);
+    }
+    .glass-card:hover::before { opacity: 1; }
+
+    .glass-card-link {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+
+    /* ─── Interface Cards (4-lane grid) ─── */
+    .lanes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    .lane-card {
+      background: var(--bs-glass);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--bs-border);
+      border-radius: var(--bs-radius);
+      overflow: hidden;
+      transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+    .lane-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--lane-accent, var(--bs-gold));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .lane-card:hover { border-color: var(--bs-border-glow); transform: translateY(-4px); box-shadow: var(--bs-shadow-glow); }
+    .lane-card:hover::after { opacity: 1; }
+
+    .lane-header {
+      padding: 24px 24px 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .lane-icon {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .lane-icon.patient { background: linear-gradient(135deg, rgba(212,165,116,0.15), rgba(212,165,116,0.05)); color: var(--bs-gold); }
+    .lane-icon.provider { background: linear-gradient(135deg, rgba(14,165,233,0.15), rgba(14,165,233,0.05)); color: var(--bs-teal); }
+    .lane-icon.payer { background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05)); color: var(--bs-emerald); }
+    .lane-icon.government { background: linear-gradient(135deg, rgba(43,108,184,0.15), rgba(43,108,184,0.05)); color: var(--bs-medical); }
+    .lane-icon.service { background: linear-gradient(135deg, rgba(148,163,184,0.1), rgba(148,163,184,0.03)); color: var(--bs-text-dim); }
+
+    .lane-tag {
+      font-family: var(--bs-font-display);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--bs-text-muted);
+    }
+    .lane-body {
+      padding: 16px 24px 24px;
+    }
+    .lane-title {
+      font-family: var(--bs-font-display);
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--bs-text);
+    }
+    .lane-desc {
+      font-size: 13.5px;
+      color: var(--bs-text-dim);
+      line-height: 1.65;
+      margin-bottom: 16px;
+    }
+    .lane-features {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+    .lane-feature {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12.5px;
+      color: var(--bs-text-muted);
+    }
+    .lane-feature .dot {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--bs-gold);
+      opacity: 0.5;
+      flex-shrink: 0;
+    }
+    .lane-route {
+      font-family: var(--bs-font-mono);
+      font-size: 11.5px;
+      color: var(--bs-text-muted);
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.03);
+      border-radius: var(--bs-radius-xs);
+      display: inline-block;
+    }
+    .lane-cta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      border-top: 1px solid var(--bs-border);
+      font-family: var(--bs-font-display);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--bs-gold);
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .lane-cta:hover { background: rgba(212,165,116,0.04); }
+    .lane-cta .arrow { transition: transform 0.2s; }
+    .lane-cta:hover .arrow { transform: translateX(4px); }
+
+    /* ─── Metric Tiles ─── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 48px;
+    }
+    .metric-tile {
+      background: var(--bs-glass);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--bs-border);
+      border-radius: var(--bs-radius-sm);
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-tile::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 3px; height: 100%;
+      background: var(--metric-color, var(--bs-gold));
+      border-radius: 0 2px 2px 0;
+    }
+    .metric-label {
+      font-family: var(--bs-font-display);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--bs-text-muted);
+      margin-bottom: 8px;
+    }
+    .metric-value {
+      font-family: var(--bs-font-display);
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--bs-text);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .metric-sub {
+      font-size: 12px;
+      color: var(--bs-text-muted);
+    }
+    .metric-pulse {
+      position: absolute;
+      top: 16px; right: 16px;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      animation: pulse 2.5s infinite;
+    }
+    .pulse-ok { background: var(--bs-emerald); box-shadow: 0 0 8px rgba(16,185,129,0.4); }
+    .pulse-warn { background: var(--bs-amber); box-shadow: 0 0 8px rgba(245,158,11,0.4); }
+    .pulse-crit { background: var(--bs-rose); box-shadow: 0 0 8px rgba(244,63,94,0.4); }
+
+    /* ─── Stack Layers ─── */
+    .stack-layers {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      background: var(--bs-border);
+      border-radius: var(--bs-radius);
+      overflow: hidden;
+      margin-top: 48px;
+    }
+    .stack-layer {
+      background: var(--bs-glass);
+      padding: 28px 32px;
+      display: flex;
+      align-items: flex-start;
+      gap: 24px;
+      transition: background 0.2s;
+    }
+    .stack-layer:hover { background: var(--bs-glass-hover); }
+    .stack-num {
+      font-family: var(--bs-font-display);
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--bs-gold);
+      background: rgba(212,165,116,0.1);
+      padding: 4px 10px;
+      border-radius: var(--bs-radius-xs);
+      flex-shrink: 0;
+      letter-spacing: 0.5px;
+    }
+    .stack-content h4 {
+      font-family: var(--bs-font-display);
+      font-weight: 700;
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+    .stack-content p {
+      color: var(--bs-text-dim);
+      font-size: 13.5px;
+    }
+
+    /* ─── Footer ─── */
+    .footer {
+      border-top: 1px solid var(--bs-border);
+      padding: 32px 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--bs-text-muted);
+    }
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .footer-links a {
+      color: var(--bs-text-dim);
+      text-decoration: none;
+      font-size: 12px;
+      transition: color 0.2s;
+    }
+    .footer-links a:hover { color: var(--bs-gold); }
+
+    /* ─── Animations ─── */
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.3); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .stagger-1 { animation: fadeSlideUp 0.5s ease-out 0.05s both; }
+    .stagger-2 { animation: fadeSlideUp 0.5s ease-out 0.1s both; }
+    .stagger-3 { animation: fadeSlideUp 0.5s ease-out 0.15s both; }
+    .stagger-4 { animation: fadeSlideUp 0.5s ease-out 0.2s both; }
+    .stagger-5 { animation: fadeSlideUp 0.5s ease-out 0.25s both; }
+    .stagger-6 { animation: fadeSlideUp 0.5s ease-out 0.3s both; }
+    .stagger-7 { animation: fadeSlideUp 0.5s ease-out 0.35s both; }
+    .stagger-8 { animation: fadeSlideUp 0.5s ease-out 0.4s both; }
+    .stagger-9 { animation: fadeSlideUp 0.5s ease-out 0.45s both; }
+    .stagger-10 { animation: fadeSlideUp 0.5s ease-out 0.5s both; }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 768px) {
+      .hero { padding: 60px 0 40px; }
+      .hero h1 { font-size: 28px; }
+      .lanes-grid { grid-template-columns: 1fr; }
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .stack-layer { flex-direction: column; gap: 12px; }
+    }
+
+    /* ─── Sub-page specific ─── */
+    .sub-hero {
+      padding: 80px 0 40px;
+    }
+    .sub-hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 14px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+    .sub-hero h1 {
+      font-family: var(--bs-font-display);
+      font-size: clamp(28px, 4vw, 48px);
+      font-weight: 800;
+      line-height: 1.15;
+      margin-bottom: 16px;
+    }
+    .sub-hero-desc {
+      font-size: 16px;
+      color: var(--bs-text-dim);
+      max-width: 560px;
+      line-height: 1.7;
+      margin-bottom: 32px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 40px;
+    }
+    .info-chip {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--bs-border);
+      border-radius: var(--bs-radius-xs);
+      padding: 12px 16px;
+    }
+    .info-chip-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--bs-text-muted);
+      margin-bottom: 4px;
+    }
+    .info-chip-value {
+      font-family: var(--bs-font-display);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--bs-text);
+    }
+    .features-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .feature-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 18px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--bs-border);
+      border-radius: var(--bs-radius-sm);
+      transition: all 0.2s;
+    }
+    .feature-item:hover { border-color: var(--bs-border-glow); background: rgba(212,165,116,0.02); }
+    .feature-bullet {
+      width: 20px; height: 20px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 10px;
+      margin-top: 1px;
+    }
+    .feature-text {
+      font-size: 14px;
+      color: var(--bs-text-dim);
+      line-height: 1.5;
+    }
+
+    /* ─── Status Page Specific ─── */
+    .status-banner {
+      padding: 10px 20px;
+      border-radius: var(--bs-radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 32px;
+    }
+    .status-ok { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.2); color: var(--bs-emerald); }
+    .status-degraded { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); color: var(--bs-amber); }
+    .status-down { background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.2); color: var(--bs-rose); }
+
+    .infra-counters {
+      display: flex;
+      gap: 32px;
+      flex-wrap: wrap;
+      padding: 24px 0;
+      border-top: 1px solid var(--bs-border);
+      border-bottom: 1px solid var(--bs-border);
+      margin: 40px 0;
+    }
+    .infra-counter {
+      text-align: center;
+    }
+    .infra-num {
+      font-family: var(--bs-font-display);
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--bs-gold);
+    }
+    .infra-label {
+      font-size: 12px;
+      color: var(--bs-text-muted);
+    }
+
+    /* Agent Strip */
+    .agent-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 20px 0;
+    }
+    .agent-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--bs-border);
+      border-radius: 100px;
+      font-family: var(--bs-font-mono);
+      font-size: 11px;
+      color: var(--bs-text-dim);
+      transition: all 0.2s;
+    }
+    .agent-chip:hover {
+      border-color: var(--bs-border-glow);
+      color: var(--bs-gold);
+    }
+    .agent-chip .chip-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--bs-teal);
+    }
+
+    /* ─── Divider ─── */
+    .section-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--bs-border), transparent);
+      margin: 0 auto;
+      max-width: 800px;
+    }
+  `;
+}
+
+function getParticleScript() {
+  return `
+  (function() {
+    const canvas = document.getElementById('particle-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let w, h, particles = [], mouse = { x: -1000, y: -1000 };
+
+    function resize() {
+      w = canvas.width = window.innerWidth;
+      h = canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    document.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+    class Particle {
+      constructor() { this.reset(); }
+      reset() {
+        this.x = Math.random() * w;
+        this.y = Math.random() * h;
+        this.vx = (Math.random() - 0.5) * 0.3;
+        this.vy = (Math.random() - 0.5) * 0.3;
+        this.r = Math.random() * 1.5 + 0.3;
+        this.alpha = Math.random() * 0.3 + 0.05;
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        if (this.x < 0 || this.x > w) this.vx *= -1;
+        if (this.y < 0 || this.y > h) this.vy *= -1;
+        const dx = mouse.x - this.x, dy = mouse.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 150) {
+          this.x -= dx * 0.005;
+          this.y -= dy * 0.005;
+        }
+      }
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(212,165,116,' + this.alpha + ')';
+        ctx.fill();
+      }
+    }
+
+    for (let i = 0; i < 80; i++) particles.push(new Particle());
+
+    function drawLines() {
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 120) {
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.strokeStyle = 'rgba(14,165,233,' + (0.06 * (1 - dist / 120)) + ')';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    function animate() {
+      ctx.clearRect(0, 0, w, h);
+      particles.forEach(p => { p.update(); p.draw(); });
+      drawLines();
+      requestAnimationFrame(animate);
+    }
+    animate();
+  })();
+  `;
+}
+
+function htmlShell(title, bodyContent, activeNav) {
+  const navLinks = [
+    { href: '/patient', label: 'BSMA', key: 'patient' },
+    { href: '/givc', label: 'GIVC', key: 'givc' },
+    { href: '/sbs', label: 'SBS', key: 'sbs' },
+    { href: '/government', label: 'Gov', key: 'government' },
+    { href: '/api', label: 'API', key: 'api' },
+    { href: '/mcp', label: 'MCP', key: 'mcp' },
+    { href: '/status', label: 'Status', key: 'status' },
+  ];
+  const navHtml = navLinks.map(l =>
+    `<a href="${l.href}"${activeNav === l.key ? ' class="active"' : ''}>${escapeHtmlText(l.label)}</a>`
+  ).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtmlText(title)}</title>
+  <meta name="description" content="BrainSAIT eCarePlus — Saudi Arabia's AI-native healthcare platform aligned with Vision 2030">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a365d'/><text x='16' y='22' text-anchor='middle' fill='%23d4a574' font-size='18' font-weight='bold' font-family='system-ui'>B</text></svg>">
+  <style>${getDesignSystem()}</style>
 </head>
 <body>
-  <div class="page">
-    <nav class="nav">
-      <div class="nav-brand">
-        <div class="nav-logo">B</div>
-        <div>
-          <div class="nav-name">BrainSAIT</div>
-          <div class="nav-sub">eCarePlus · brainsait.org</div>
-        </div>
-      </div>
-      <div class="nav-links">
-        <a href="/patient" class="nav-link">BSMA</a>
-        <a href="/givc" class="nav-link">GIVC</a>
-        <a href="/sbs" class="nav-link">SBS</a>
-        <a href="/government" class="nav-link">Government</a>
-        <a href="/api" class="nav-link">API</a>
-        <a href="/status" class="nav-link">Status</a>
-        <a href="/patient" class="nav-cta">Patient Portal →</a>
-      </div>
-    </nav>
+  <canvas id="particle-canvas"></canvas>
+  <div class="ambient-orb orb-gold"></div>
+  <div class="ambient-orb orb-teal"></div>
+  <div class="ambient-orb orb-medical"></div>
 
-    <section class="hero">
-      <div>
-        <div class="eyebrow">BrainSAIT eCarePlus · Saudi Vision 2030</div>
-        <h1>Saudi Arabia's patient-first cognitive backbone for healthcare.</h1>
-        <p>
-          Four AI-native interfaces shape how patients, providers, payers, and government teams interact with Saudi healthcare.
-          BSMA leads as the patient front door, while GIVC, SBS, and the government lane stay connected through Oracle Oasis+
-          and BrainSAIT backend portals for search, retrieval, query, booking, submission, and operational coordination.
-        </p>
-        <div class="hero-actions">
-          <a href="/patient" class="btn btn-primary">Talk to BSMA (بسمة)</a>
-          <a href="/givc" class="btn btn-secondary">GIVC Provider Interface</a>
-        </div>
-        <div class="status-strip">
-          <div class="status-chip"><span class="status-dot"></span>BSMA is the main patient-facing default interface</div>
-          <div class="status-chip"><span class="status-dot"></span>Oracle and Oasis+ portals remain the shared backend spine</div>
-          <div class="status-chip"><span class="status-dot"></span>Updated ${escapeHtmlText(renderedAt.toISOString().replace("T", " ").slice(0, 16))} UTC</div>
-        </div>
-      </div>
-      <aside class="hero-card">
-        <h2>Live operational pulse</h2>
-        <div class="hero-list">
-          <div class="hero-list-item">
-            <strong>Hospitals</strong>
-            <span>${escapeHtmlText(formatRatio(hospitalSummary.online, hospitalSummary.total, "online"))}</span>
-          </div>
-          <div class="hero-list-item">
-            <strong>External services</strong>
-            <span>${escapeHtmlText(formatPercent(externalSummary.availabilityPct))} availability</span>
-          </div>
-          <div class="hero-list-item">
-            <strong>Claims queue</strong>
-            <span>${escapeHtmlText(`${claimsSummary.readyClaims || 0} ready · ${claimsSummary.blockedClaims || 0} blocked`)}</span>
-          </div>
-          <div class="hero-list-item">
-            <strong>Platform apps</strong>
-            <span>${escapeHtmlText(`${platformSummary.total || 0} tracked surfaces`)}</span>
-          </div>
-        </div>
-      </aside>
-    </section>
-
-    <div class="section-head" id="platform">
-      <div>
-        <h2>One platform, four healthcare interfaces</h2>
-        <p>Every stakeholder gets a dedicated BrainSAIT lane, while the same backend portals and operational fabric keep search, retrieval, booking, and submissions synchronized.</p>
-      </div>
-    </div>
-
-    <section class="routes">
-      ${primaryRouteCards.map((card) => `
-        <a href="${escapeHtml(card.href)}" class="route-card ${escapeHtml(card.tone)}">
-          <div class="tone">${escapeHtml(card.label)}</div>
-          <h3>${escapeHtml(card.name)}</h3>
-          <p>${escapeHtml(card.description)}</p>
-          <div class="feature-list">
-            ${card.features.map((feature) => `
-              <div class="feature-item">
-                <span class="feature-dot ${escapeHtml(card.tone)}"></span>
-                <span>${escapeHtml(feature)}</span>
-              </div>
-            `).join("")}
-          </div>
-          <div class="card-footer">
-            <span>${escapeHtml(card.aliases.length ? `${card.url} · aliases ${card.aliases.join(", ")}` : card.url)}</span>
-            <span>↗</span>
-          </div>
+  <div class="page-wrapper">
+    <header class="top-bar">
+      <div class="top-bar-inner">
+        <a href="/" class="top-bar-brand">
+          <div class="brand-mark">B</div>
+          <span class="brand-text">BrainSAIT<span class="brand-dot">eCarePlus</span></span>
         </a>
-      `).join("")}
-    </section>
-
-    <div class="section-head">
-      <div>
-        <h2>Connected operational services</h2>
-        <p>The public interfaces run on top of interoperability, AI, Oracle, and status surfaces that keep the BrainSAIT network observable and connected.</p>
+        <nav class="top-bar-nav">${navHtml}</nav>
       </div>
-    </div>
-
-    <section class="routes">
-      ${supportRouteCards.map((card) => `
-        <a href="${escapeHtml(card.href)}" class="route-card ${escapeHtml(card.tone)}">
-          <div class="tone">${escapeHtml(card.label)}</div>
-          <h3>${escapeHtml(card.name)}</h3>
-          <p>${escapeHtml(card.description)}</p>
-          <div class="feature-list">
-            ${card.features.map((feature) => `
-              <div class="feature-item">
-                <span class="feature-dot ${escapeHtml(card.tone)}"></span>
-                <span>${escapeHtml(feature)}</span>
-              </div>
-            `).join("")}
-          </div>
-          <div class="card-footer">
-            <span>${escapeHtml(card.url)}</span>
-            <span>↗</span>
-          </div>
-        </a>
-      `).join("")}
-    </section>
-
-    <section class="metrics" id="operations">
-      <div class="section-head" style="margin-top:0;">
-        <div>
-          <h2>Live operations snapshot</h2>
-          <p>These tiles are fed from the same live control-tower snapshot that powers the operator dashboard.</p>
-        </div>
-      </div>
-      <div class="metric-grid">
-        ${liveMetrics.map((metric) => `
-          <article class="metric-tile">
-            <div class="metric-label">${escapeHtml(metric.label)}</div>
-            <div class="metric-value">${escapeHtml(metric.value)}</div>
-            <div class="metric-detail">${escapeHtml(metric.detail)}</div>
-          </article>
-        `).join("")}
-      </div>
-    </section>
-
-    <section class="layers" id="architecture">
-      <div class="section-head" style="margin-top:0;">
-        <div>
-          <h2>How the platform stacks together</h2>
-          <p>Operational visibility stays aligned with the same hospital systems, integrations, AI agents, and action surfaces that power the Control Tower.</p>
-        </div>
-      </div>
-      <div class="layer-grid">
-        ${CONTROL_TOWER_LAYERS.map((layer) => `
-          <article class="layer-card">
-            <span>${escapeHtml(layer.label)}</span>
-            <h3>${escapeHtml(layer.title)}</h3>
-            <p>${escapeHtml(layer.detail)}</p>
-            <strong>${escapeHtml(layer.outcome)}</strong>
-          </article>
-        `).join("")}
-      </div>
-    </section>
-
+    </header>
+    ${bodyContent}
     <footer class="footer">
       <div class="footer-links">
         <a href="/patient">BSMA</a>
@@ -3470,13 +3875,550 @@ function renderLandingPage(snapshot) {
         <a href="/status">Status</a>
         <a href="/oasis">Oasis+</a>
         <a href="/oracle">Oracle</a>
+        <a href="/simulation">Simulation</a>
         <a href="/control-tower">Control Tower</a>
       </div>
-      <div class="footer-meta">OID: 1.3.6.1.4.1.61026 · brainsait.org · ${escapeHtmlText(renderedAt.toISOString().slice(0, 10))}</div>
+      <div>OID: 1.3.6.1.4.1.61026 · brainsait.org · ${new Date().toISOString().slice(0, 10)}</div>
     </footer>
   </div>
+  <script>${getParticleScript()}</script>
 </body>
 </html>`;
+}
+
+function getStaggerClass(index) {
+  return `stagger-${(index % 7) + 1}`;
+}
+
+function getServiceTheme(service) {
+  const themeMap = {
+    "/patient": { lane: "patient", icon: "🙂", accent: "var(--bs-gold)", bg: "rgba(212,165,116,0.08)", border: "rgba(212,165,116,0.15)" },
+    "/givc": { lane: "provider", icon: "⚕️", accent: "var(--bs-teal)", bg: "rgba(14,165,233,0.08)", border: "rgba(14,165,233,0.15)" },
+    "/sbs": { lane: "payer", icon: "💳", accent: "var(--bs-emerald)", bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.15)" },
+    "/government": { lane: "government", icon: "🏛️", accent: "var(--bs-medical)", bg: "rgba(43,108,184,0.08)", border: "rgba(43,108,184,0.15)" },
+    "/api": { lane: "service", icon: "🔗", accent: "var(--bs-gold)", bg: "rgba(212,165,116,0.08)", border: "rgba(212,165,116,0.15)" },
+    "/mcp": { lane: "service", icon: "🤖", accent: "var(--bs-teal)", bg: "rgba(14,165,233,0.08)", border: "rgba(14,165,233,0.15)" },
+    "/oasis": { lane: "service", icon: "🏢", accent: "var(--bs-medical)", bg: "rgba(43,108,184,0.08)", border: "rgba(43,108,184,0.15)" },
+    "/oracle": { lane: "service", icon: "🧬", accent: "var(--bs-gold)", bg: "rgba(212,165,116,0.08)", border: "rgba(212,165,116,0.15)" },
+    "/simulation": { lane: "service", icon: "🏥", accent: "var(--bs-gold)", bg: "rgba(212,165,116,0.08)", border: "rgba(212,165,116,0.15)" },
+    "/status": { lane: "service", icon: "📊", accent: "var(--bs-emerald)", bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.15)" },
+    "/docs": { lane: "service", icon: "📚", accent: "var(--bs-text-dim)", bg: "rgba(148,163,184,0.08)", border: "rgba(148,163,184,0.15)" },
+    "/admin": { lane: "service", icon: "🛡️", accent: "var(--bs-rose)", bg: "rgba(244,63,94,0.08)", border: "rgba(244,63,94,0.15)" },
+  };
+
+  return themeMap[service.path] || { lane: "service", icon: "📡", accent: "var(--bs-gold)", bg: "rgba(212,165,116,0.08)", border: "rgba(212,165,116,0.15)" };
+}
+
+function getServiceLaunchHref(service) {
+  if (service.launchHref) return service.launchHref;
+  if (!service.host) return null;
+  return service.host.startsWith("http") ? service.host : `https://${service.host}`;
+}
+
+function formatServiceRoutes(service) {
+  return [service.path, ...(service.aliases || [])].join(" · ");
+}
+
+function formatTimestampUtc(value) {
+  return String(value || new Date().toISOString()).replace("T", " ").slice(0, 19);
+}
+
+function hostLabel(value) {
+  if (!value) return "brainsait.org";
+  try {
+    return new URL(value).host;
+  } catch {
+    return String(value).replace(/^https?:\/\//, "");
+  }
+}
+
+function renderMetricTile(metric, index) {
+  return `
+    <div class="metric-tile ${getStaggerClass(index)}" style="--metric-color: ${metric.color};">
+      ${metric.pulse ? `<div class="metric-pulse ${metric.pulse}"></div>` : ""}
+      <div class="metric-label">${escapeHtmlText(metric.label)}</div>
+      <div class="metric-value">${escapeHtmlText(metric.value)}</div>
+      <div class="metric-sub">${escapeHtmlText(metric.detail)}</div>
+    </div>
+  `;
+}
+
+function renderAgentStrip() {
+  return MCP_AGENT_NETWORK.map((agent) => `<span class="agent-chip"><span class="chip-dot"></span>${escapeHtmlText(agent)}</span>`).join("");
+}
+
+function toneStyles(tone) {
+  if (tone === "critical") {
+    return { accent: "var(--bs-rose)", background: "rgba(244,63,94,0.1)" };
+  }
+  if (tone === "watch") {
+    return { accent: "var(--bs-amber)", background: "rgba(245,158,11,0.1)" };
+  }
+  return { accent: "var(--bs-emerald)", background: "rgba(16,185,129,0.1)" };
+}
+
+function renderStatusRow(title, meta, signal, tone, index) {
+  const styles = toneStyles(tone);
+  return `
+    <div class="feature-item ${getStaggerClass(index)}">
+      <div class="feature-bullet" style="background:${styles.background};color:${styles.accent};">●</div>
+      <div>
+        <span class="feature-text" style="font-weight:600;color:var(--bs-text);">${escapeHtmlText(title)}</span>
+        <span style="display:block;font-size:12px;color:var(--bs-text-muted);margin-top:4px;">${escapeHtmlText(meta)}</span>
+        <span style="display:block;font-size:12px;color:var(--bs-text-muted);margin-top:3px;">${escapeHtmlText(signal)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderLaneCard(type, icon, tag, title, desc, features, href, routes, stagger) {
+  return `
+    <div class="lane-card ${stagger}" style="--lane-accent: ${type === 'patient' ? 'var(--bs-gold)' : type === 'provider' ? 'var(--bs-teal)' : type === 'payer' ? 'var(--bs-emerald)' : 'var(--bs-medical)'}">
+      <div class="lane-header">
+        <div class="lane-icon ${type}">${icon}</div>
+        <span class="lane-tag">${escapeHtmlText(tag)}</span>
+      </div>
+      <div class="lane-body">
+        <h3 class="lane-title">${escapeHtmlText(title)}</h3>
+        <p class="lane-desc">${escapeHtmlText(desc)}</p>
+        <div class="lane-features">
+          ${features.map(f => `<div class="lane-feature"><span class="dot"></span>${escapeHtmlText(f)}</div>`).join('')}
+        </div>
+        <span class="lane-route">${escapeHtmlText(routes)}</span>
+      </div>
+      <a href="${href}" class="lane-cta">
+        <span>Open interface</span>
+        <span class="arrow">→</span>
+      </a>
+    </div>
+  `;
+}
+
+function renderServiceCard(icon, title, desc, href, stagger) {
+  return `
+    <a href="${href}" class="glass-card-link ${stagger}">
+      <div class="glass-card" style="padding: 22px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+          <div class="lane-icon service">${icon}</div>
+          <h4 style="font-family:var(--bs-font-display);font-size:15px;font-weight:700;">${escapeHtmlText(title)}</h4>
+        </div>
+        <p style="font-size:13px;color:var(--bs-text-dim);line-height:1.6;margin-bottom:12px;">${escapeHtmlText(desc)}</p>
+        <span class="lane-route">${escapeHtmlText(href)}</span>
+      </div>
+    </a>
+  `;
+}
+
+function renderLandingPage(snapshot) {
+  const summary = snapshot.summary || {};
+  const hosp = summary.hospitals || {};
+  const ext = summary.externalServices || {};
+  const claims = summary.claims || {};
+  const apps = summary.platformApps || {};
+  const actions = summary.actions || {};
+  const overall = summary.overall || {};
+  const infra = buildInfrastructureSnapshot(snapshot);
+
+  const hospOnline = hosp.online || 0;
+  const hospTotal = hosp.total || BRANCHES.length;
+  const hospPct = hospTotal > 0 ? Math.round((hospOnline / hospTotal) * 100) : 0;
+  const extReachable = ext.online || 0;
+  const extTotal = ext.total || MOH_PORTALS.length;
+  const extAvgMs = ext.avgLatencyMs || 0;
+  const claimsReady = claims.readyClaims || 0;
+  const claimsBlocked = claims.blockedClaims || 0;
+  const appsLive = apps.live || 0;
+  const appsTotal = apps.total || 0;
+  const appsCritical = apps.critical || 0;
+  const actionsActive = actions.total || 0;
+  const actionsCrit = actions.critical || 0;
+  const actionsHigh = actions.high || 0;
+  const avgLat = overall.avgLatencyMs || 0;
+  const latEndpoints = overall.monitoredEndpoints || 0;
+  const primaryServices = EDGE_SERVICE_DIRECTORY.filter((service) => service.kind === "primary");
+  const supportServices = EDGE_SERVICE_DIRECTORY.filter((service) => service.kind !== "primary");
+
+  const hospPulse = hospPct >= 80 ? 'pulse-ok' : hospPct >= 50 ? 'pulse-warn' : 'pulse-crit';
+  const extPulse = extReachable >= Math.max(1, extTotal - 1) ? 'pulse-ok' : extReachable >= 1 ? 'pulse-warn' : 'pulse-crit';
+
+  const body = `
+    <main>
+      <section class="hero">
+        <div class="container">
+          <div class="hero-badge"><span class="pulse-dot"></span> eCarePlus · Saudi Vision 2030</div>
+          <h1>Saudi Arabia's <span class="gold">smart portal edge</span><br>for <span class="teal">BOS</span>, BOT, Oracle, and MCP healthcare routing.</h1>
+          <p class="hero-sub">
+            BrainSAIT eCarePlus is the public gateway into patient, provider, payer, government, Oracle, and agentic healthcare systems.
+            The live control-tower snapshot, hospital branch probes, Oracle portals, and scanner integrations stay intact while the landing layer upgrades to the v5 glassmorphic experience.
+          </p>
+          <div class="hero-actions">
+            <a href="/patient" class="btn btn-gold">Open BSMA router</a>
+            <a href="/status" class="btn btn-outline">Public status</a>
+            <a href="/control-tower" class="btn btn-outline">Control Tower</a>
+          </div>
+          <div class="agent-strip" style="padding-top:20px;">
+            <span class="agent-chip"><span class="chip-dot"></span>BOS orchestration</span>
+            <span class="agent-chip"><span class="chip-dot"></span>BOT automation</span>
+            <span class="agent-chip"><span class="chip-dot"></span>${escapeHtmlText(hostLabel('https://mcp.brainsait.org'))}</span>
+            <span class="agent-chip"><span class="chip-dot"></span>Simulation ready</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top: 20px;">
+        <div class="container">
+          <div class="section-label">Live Operational Pulse</div>
+          <div class="metrics-grid">
+            ${renderMetricTile({ label: 'Hospitals', value: `${hospOnline}/${hospTotal}`, detail: `${hospPct}% availability`, color: hospPct >= 80 ? 'var(--bs-emerald)' : hospPct >= 50 ? 'var(--bs-amber)' : 'var(--bs-rose)', pulse: hospPulse }, 0)}
+            ${renderMetricTile({ label: 'External Services', value: `${extReachable}/${extTotal}`, detail: `Avg ${Math.round(extAvgMs)}ms latency`, color: 'var(--bs-teal)', pulse: extPulse }, 1)}
+            ${renderMetricTile({ label: 'Claims Engine', value: String(claimsReady), detail: `${claimsBlocked} blocked claims`, color: 'var(--bs-gold)' }, 2)}
+            ${renderMetricTile({ label: 'Platform Apps', value: `${appsLive}/${appsTotal}`, detail: appsCritical > 0 ? `${appsCritical} critical attention` : 'Normal', color: 'var(--bs-medical)' }, 3)}
+            ${renderMetricTile({ label: 'Action Queue', value: String(actionsActive), detail: `${actionsCrit} critical · ${actionsHigh} high`, color: actionsCrit > 0 ? 'var(--bs-rose)' : 'var(--bs-emerald)' }, 4)}
+            ${renderMetricTile({ label: 'Avg Latency', value: `${Math.round(avgLat)}ms`, detail: `${latEndpoints} monitored endpoints`, color: 'var(--bs-teal)' }, 5)}
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-label">Systems Router</div>
+          <div class="section-title">One gateway, four healthcare lanes</div>
+          <p class="section-desc">
+            Each major lane retains a BrainSAIT-controlled router page on brainsait.org, then launches operators and users toward the correct live platform surface.
+            Backend connections to branch Oracle portals and the control tower remain unchanged.
+          </p>
+          <div class="lanes-grid">
+            ${primaryServices.map((service, index) => {
+              const theme = getServiceTheme(service);
+              return renderLaneCard(
+                theme.lane,
+                theme.icon,
+                service.category,
+                service.title,
+                service.description,
+                service.features || [],
+                service.path,
+                formatServiceRoutes(service),
+                getStaggerClass(index),
+              );
+            }).join('')}
+          </div>
+        </div>
+      </section>
+
+      <div class="section-divider"></div>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-label">Connected Services</div>
+          <div class="section-title">Infrastructure, agents, Oracle, and simulation</div>
+          <p class="section-desc">
+            Support services expose the wider BrainSAIT platform fabric: API and MCP gateways, Oracle Oasis, the Oracle bridge, the public status surface, docs, admin, and the agentic simulated hospital.
+          </p>
+          <div class="lanes-grid">
+            ${supportServices.map((service, index) => {
+              const theme = getServiceTheme(service);
+              return renderServiceCard(theme.icon, service.title, service.description, service.path, getStaggerClass(index));
+            }).join('')}
+          </div>
+        </div>
+      </section>
+
+      <section style="padding: 0 0 40px;">
+        <div class="container">
+          <div class="section-label" style="margin-bottom:16px;">LINC Agent Network</div>
+          <div class="agent-strip">${renderAgentStrip()}</div>
+        </div>
+      </section>
+
+      <div class="section-divider"></div>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-label">Infrastructure Reference</div>
+          <div class="section-title">Cloudflare edge, BOS, BOT, and branch operations</div>
+          <p class="section-desc">
+            The portal now surfaces BOS orchestration, BOT automation, the MCP agent layer, Cloudflare Workers, D1, hospital branches, claims readiness, and the simulation environment alongside the live operational snapshot.
+          </p>
+          <div class="metrics-grid">
+            ${renderMetricTile({ label: 'Workers', value: String(infra.inventory.workers), detail: 'Cloudflare Worker estate', color: 'var(--bs-gold)' }, 0)}
+            ${renderMetricTile({ label: 'D1 Databases', value: String(infra.inventory.d1Databases), detail: 'Edge persistence layer', color: 'var(--bs-medical)' }, 1)}
+            ${renderMetricTile({ label: 'Hospital Branches', value: String(infra.inventory.hospitalBranches), detail: 'Oracle-linked branches', color: 'var(--bs-emerald)' }, 2)}
+            ${renderMetricTile({ label: 'Claims Ready', value: String(claimsReady), detail: 'Scanner-informed portfolio', color: 'var(--bs-gold)' }, 3)}
+            ${renderMetricTile({ label: 'BOS', value: 'Active', detail: 'Operating System orchestration', color: 'var(--bs-teal)' }, 4)}
+            ${renderMetricTile({ label: 'BOT', value: 'Active', detail: 'Operational Tools automation', color: 'var(--bs-teal)' }, 5)}
+            ${renderMetricTile({ label: 'MCP Agents', value: String(MCP_AGENT_NETWORK.length), detail: 'Gateway via mcp.brainsait.org', color: 'var(--bs-medical)' }, 6)}
+            ${renderMetricTile({ label: 'Simulation', value: 'Online', detail: hostLabel('https://simulation.brainsait.org'), color: 'var(--bs-gold)' }, 7)}
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-label">Architecture</div>
+          <div class="section-title">How the platform stacks together</div>
+          <p class="section-desc">
+            Cloudflare edge routing feeds BOS orchestration, the MCP agent network, BOT automation, Oracle hospital gateways, and the simulated hospital training environment without changing the existing protected worker logic.
+          </p>
+          <div class="stack-layers">
+            ${PORTAL_STACK_LAYERS.map((layer, index) => `
+              <div class="stack-layer ${getStaggerClass(index)}">
+                <span class="stack-num">${escapeHtmlText(layer.label)}</span>
+                <div class="stack-content">
+                  <h4>${escapeHtmlText(layer.title)}</h4>
+                  <p>${escapeHtmlText(layer.detail)}</p>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </section>
+    </main>
+  `;
+
+  return htmlShell('BrainSAIT eCarePlus', body, null);
+}
+
+function renderServiceEntryPage(service, snapshot) {
+  const summary = snapshot.summary || {};
+  const hosp = summary.hospitals || {};
+  const claims = summary.claims || {};
+  const actions = summary.actions || {};
+  const apps = summary.platformApps || {};
+  const theme = getServiceTheme(service);
+  const routes = formatServiceRoutes(service);
+  const launchHref = getServiceLaunchHref(service);
+  const relatedServices = EDGE_SERVICE_DIRECTORY.filter((candidate) => candidate.path !== service.path).slice(0, 4);
+  const activeNav = service.path === '/patient' ? 'patient' : service.slug;
+
+  const body = `
+    <main>
+      <section class="sub-hero">
+        <div class="container">
+          <div class="sub-hero-badge" style="background:${theme.bg};border:1px solid ${theme.border};color:${theme.accent};">
+            ${theme.icon} ${escapeHtmlText(service.category)}
+          </div>
+          <h1>${escapeHtmlText(service.title)}</h1>
+          <p class="sub-hero-desc">${escapeHtmlText(service.description)}</p>
+
+          <div class="info-grid">
+            <div class="info-chip">
+              <div class="info-chip-label">Audience</div>
+              <div class="info-chip-value">${escapeHtmlText(service.audience)}</div>
+            </div>
+            <div class="info-chip">
+              <div class="info-chip-label">Entry routes</div>
+              <div class="info-chip-value" style="font-family:var(--bs-font-mono);font-size:12px;">${escapeHtmlText(routes)}</div>
+            </div>
+            <div class="info-chip">
+              <div class="info-chip-label">Live destination</div>
+              <div class="info-chip-value">${escapeHtmlText(hostLabel(launchHref || service.host || 'brainsait.org'))}</div>
+            </div>
+            <div class="info-chip">
+              <div class="info-chip-label">Agent gateway</div>
+              <div class="info-chip-value">${escapeHtmlText(hostLabel('https://mcp.brainsait.org'))}</div>
+            </div>
+          </div>
+
+          <div class="hero-actions">
+            ${launchHref ? `<a href="${escapeHtmlText(launchHref)}" target="_blank" rel="noopener noreferrer" class="btn btn-gold">${escapeHtmlText(service.launchLabel || `Open ${service.shortName}`)}</a>` : ''}
+            <a href="/status" class="btn btn-outline">View public status</a>
+            <a href="/control-tower" class="btn btn-outline">Open Control Tower</a>
+            <a href="/" class="btn btn-outline">Back to brainsait.org</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:20px;">
+        <div class="container">
+          <div class="section-label">Service Highlights</div>
+          <div class="section-title">What this interface delivers</div>
+          <div class="features-list" style="max-width:720px; margin-top:24px;">
+            ${(service.features || []).map((feature, index) => `
+              <div class="feature-item ${getStaggerClass(index)}">
+                <div class="feature-bullet" style="background:${theme.bg};color:${theme.accent};">✓</div>
+                <span class="feature-text">${escapeHtmlText(feature)}</span>
+              </div>
+            `).join('')}
+          </div>
+          ${(service.relatedLinks || []).length ? `
+            <div class="agent-strip" style="padding-top:18px;">
+              ${service.relatedLinks.map((link) => `<a href="${escapeHtmlText(link.href)}" target="_blank" rel="noopener noreferrer" class="agent-chip"><span class="chip-dot"></span>${escapeHtmlText(link.label)}</a>`).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:0;">
+        <div class="container">
+          <div class="section-label">Operational Context</div>
+          <div class="metrics-grid">
+            ${renderMetricTile({ label: 'Hospitals', value: `${hosp.online || 0}/${hosp.total || 0}`, detail: `${formatPercent(hosp.availabilityPct)} availability`, color: (hosp.online || 0) === (hosp.total || 0) ? 'var(--bs-emerald)' : (hosp.online || 0) > 0 ? 'var(--bs-amber)' : 'var(--bs-rose)' }, 0)}
+            ${renderMetricTile({ label: 'Claims Ready', value: String(claims.readyClaims || 0), detail: `${claims.blockedClaims || 0} blocked claims`, color: 'var(--bs-gold)' }, 1)}
+            ${renderMetricTile({ label: 'Platform Apps', value: `${apps.live || 0}/${apps.total || 0}`, detail: `${apps.critical || 0} critical attention`, color: 'var(--bs-medical)' }, 2)}
+            ${renderMetricTile({ label: 'Actions', value: String(actions.total || 0), detail: `${actions.critical || 0} critical · ${actions.high || 0} high`, color: (actions.critical || 0) > 0 ? 'var(--bs-rose)' : 'var(--bs-emerald)' }, 3)}
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:0;">
+        <div class="container">
+          <div class="section-label">Connected Services</div>
+          <div class="section-title">Part of the BrainSAIT fabric</div>
+          <p class="section-desc">This route stays connected to the wider edge fabric: status, API, MCP, Oracle, and simulation services remain discoverable from the router page.</p>
+          <div class="lanes-grid" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));">
+            ${relatedServices.map((candidate, index) => {
+              const candidateTheme = getServiceTheme(candidate);
+              return renderServiceCard(candidateTheme.icon, candidate.title, candidate.description, candidate.path, getStaggerClass(index));
+            }).join('')}
+          </div>
+        </div>
+      </section>
+
+      <section style="padding: 0 0 60px;">
+        <div class="container">
+          <div class="section-label" style="margin-bottom:16px;">Active LINC Agents</div>
+          <div class="agent-strip">${renderAgentStrip()}</div>
+        </div>
+      </section>
+    </main>
+  `;
+
+  return htmlShell(`${service.title} · BrainSAIT`, body, activeNav);
+}
+
+function renderStatusPage(snapshot) {
+  const ts = snapshot?.timestamp || new Date().toISOString();
+  const summary = snapshot.summary || {};
+  const hosp = summary.hospitals || {};
+  const ext = summary.externalServices || {};
+  const claims = summary.claims || {};
+  const apps = summary.platformApps || {};
+  const actions = summary.actions || {};
+  const overall = summary.overall || {};
+  const infra = buildInfrastructureSnapshot(snapshot);
+  const platformStatus = derivePlatformStatus(summary);
+
+  const hospOnline = hosp.online || 0;
+  const hospTotal = hosp.total || BRANCHES.length;
+  const hospPct = hospTotal > 0 ? Math.round((hospOnline / hospTotal) * 100) : 0;
+  const extReachable = ext.online || 0;
+  const extTotal = ext.total || MOH_PORTALS.length;
+  const extAvgMs = ext.avgLatencyMs || 0;
+  const claimsReady = claims.readyClaims || 0;
+  const claimsBlocked = claims.blockedClaims || 0;
+  const appsLive = apps.live || 0;
+  const appsTotal = apps.total || 0;
+  const appsCritical = apps.critical || 0;
+  const actionsActive = actions.total || 0;
+  const actionsCrit = actions.critical || 0;
+  const actionsHigh = actions.high || 0;
+  const avgLat = overall.avgLatencyMs || 0;
+  const latEndpoints = overall.monitoredEndpoints || 0;
+
+  const bannerClass = platformStatus === 'operational' ? 'status-ok' : platformStatus === 'degraded' ? 'status-degraded' : 'status-down';
+  const bannerText = platformStatus === 'operational'
+    ? 'All public platform surfaces are operational.'
+    : platformStatus === 'degraded'
+      ? 'Partial degradation detected across monitored services.'
+      : 'Significant public service issues detected.';
+  const bannerIcon = platformStatus === 'operational' ? '●' : platformStatus === 'degraded' ? '▲' : '▼';
+
+  const body = `
+    <main>
+      <section class="sub-hero">
+        <div class="container">
+          <a href="/" style="color:var(--bs-text-dim);text-decoration:none;font-size:13px;display:inline-flex;align-items:center;gap:6px;margin-bottom:20px;">← Back to brainsait.org</a>
+          <div class="section-label">Public Operations</div>
+          <h1>BrainSAIT <span style="color:var(--bs-gold);">Platform Status</span></h1>
+          <p class="sub-hero-desc">
+            This public operations view reflects the same live control-tower snapshot used by the operator dashboard,
+            summarized for safe external visibility across hospitals, external exchanges, claims readiness, and platform actions.
+          </p>
+          <div class="status-banner ${bannerClass}">${bannerIcon} ${escapeHtmlText(bannerText)}</div>
+          <div style="font-size:12px;color:var(--bs-text-muted);margin-top:12px;">Updated ${escapeHtmlText(formatTimestampUtc(ts))} UTC</div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:20px;">
+        <div class="container">
+          <div class="metrics-grid">
+            ${renderMetricTile({ label: 'Hospitals Online', value: `${hospOnline}/${hospTotal}`, detail: `${hospPct}% availability`, color: hospPct >= 80 ? 'var(--bs-emerald)' : hospPct >= 50 ? 'var(--bs-amber)' : 'var(--bs-rose)', pulse: hospPct >= 80 ? 'pulse-ok' : hospPct >= 50 ? 'pulse-warn' : 'pulse-crit' }, 0)}
+            ${renderMetricTile({ label: 'External Services', value: `${extReachable}/${extTotal}`, detail: `Avg ${Math.round(extAvgMs)}ms latency`, color: 'var(--bs-teal)', pulse: extReachable >= Math.max(1, extTotal - 1) ? 'pulse-ok' : extReachable >= 1 ? 'pulse-warn' : 'pulse-crit' }, 1)}
+            ${renderMetricTile({ label: 'Claims Ready', value: String(claimsReady), detail: `${claimsBlocked} blocked claims`, color: 'var(--bs-gold)' }, 2)}
+            ${renderMetricTile({ label: 'Platform Apps', value: `${appsLive}/${appsTotal}`, detail: appsCritical > 0 ? `${appsCritical} critical attention` : 'Normal', color: 'var(--bs-medical)' }, 3)}
+            ${renderMetricTile({ label: 'Priority Actions', value: String(actionsActive), detail: `${actionsCrit} critical · ${actionsHigh} high`, color: actionsCrit > 0 ? 'var(--bs-rose)' : 'var(--bs-emerald)' }, 4)}
+            ${renderMetricTile({ label: 'Avg Latency', value: `${Math.round(avgLat)}ms`, detail: `${latEndpoints} monitored endpoints`, color: 'var(--bs-teal)' }, 5)}
+          </div>
+        </div>
+      </section>
+
+      ${(snapshot.hospitals || []).length ? `
+      <section class="section" style="padding-top:0;">
+        <div class="container">
+          <div class="section-label">Hospital Network</div>
+          <div class="section-title">Branch connectivity</div>
+          <div class="features-list" style="max-width:760px;margin-top:20px;">
+            ${(snapshot.hospitals || []).map((hospital, index) => renderStatusRow(
+              hospital.nameEn || hospital.name || hospital.id,
+              `${hospital.region || 'Hospital'} · ${hospital.healthLabel || 'Unknown'} · ${formatLatency(hospital.latency)}`,
+              hospital.signal || 'Awaiting next probe.',
+              hospital.tone || (hospital.online ? 'stable' : 'critical'),
+              index,
+            )).join('')}
+          </div>
+        </div>
+      </section>
+      ` : ''}
+
+      ${(snapshot.externalServices || []).length ? `
+      <section class="section" style="padding-top:0;">
+        <div class="container">
+          <div class="section-label">External Services</div>
+          <div class="section-title">MOH and NPHIES posture</div>
+          <div class="features-list" style="max-width:760px;margin-top:20px;">
+            ${(snapshot.externalServices || []).map((service, index) => renderStatusRow(
+              service.nameEn || service.name || service.id,
+              `${service.healthLabel || 'Unknown'} · ${formatLatency(service.latency)}`,
+              service.signal || 'Awaiting next probe.',
+              service.tone || (service.online ? 'stable' : 'critical'),
+              index,
+            )).join('')}
+          </div>
+        </div>
+      </section>
+      ` : ''}
+
+      <section class="section">
+        <div class="container">
+          <div class="section-label">Infrastructure Reference</div>
+          <div class="infra-counters">
+            <div class="infra-counter ${getStaggerClass(0)}"><div class="infra-num">${escapeHtmlText(String(infra.inventory.workers))}</div><div class="infra-label">Cloudflare Workers</div></div>
+            <div class="infra-counter ${getStaggerClass(1)}"><div class="infra-num">${escapeHtmlText(String(infra.inventory.d1Databases))}</div><div class="infra-label">D1 Databases</div></div>
+            <div class="infra-counter ${getStaggerClass(2)}"><div class="infra-num">${escapeHtmlText(String(infra.inventory.kvNamespaces))}</div><div class="infra-label">KV Namespaces</div></div>
+            <div class="infra-counter ${getStaggerClass(3)}"><div class="infra-num">${escapeHtmlText(String(infra.inventory.hospitalBranches))}</div><div class="infra-label">Hospital Branches</div></div>
+            <div class="infra-counter ${getStaggerClass(4)}"><div class="infra-num">${escapeHtmlText(String(infra.inventory.agents))}</div><div class="infra-label">LINC Agents</div></div>
+            <div class="infra-counter ${getStaggerClass(5)}"><div class="infra-num">BOS</div><div class="infra-label">Orchestration</div></div>
+            <div class="infra-counter ${getStaggerClass(6)}"><div class="infra-num">BOT</div><div class="infra-label">Automation</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:0;">
+        <div class="container">
+          <div class="section-label">Quick Access</div>
+          <div class="lanes-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">
+            ${EDGE_SERVICE_DIRECTORY.filter((service) => ['/patient', '/givc', '/sbs', '/mcp', '/simulation'].includes(service.path)).map((service, index) => {
+              const theme = getServiceTheme(service);
+              return renderServiceCard(theme.icon, service.title, service.description, service.path, getStaggerClass(index));
+            }).join('')}
+          </div>
+        </div>
+      </section>
+    </main>
+  `;
+
+  return htmlShell('BrainSAIT Platform Status', body, 'status');
 }
 
 function renderDashboard(snapshot) {

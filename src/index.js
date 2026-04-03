@@ -1958,25 +1958,30 @@ async function handleDebugManageClaims(request, env) {
     const toVal   = toDDMMYYYY(toDate);
     const fillResult = { fromFilled: false, toFilled: false, fromVal, toVal };
 
-    // ADF date inputs: use keyboard but press Escape first to dismiss any calendar popup
-    // Strategy: Tab to field, Escape to close popup, Ctrl+A to select all, type value, Tab to commit
+    // ADF date inputs: use page.focus() (not page.click) to avoid triggering calendar popup
+    // Then triple-select-all + type + Tab to commit
     async function fillAdfDate(sel, val) {
       if (!sel) return false;
       try {
-        // Click, Escape to dismiss calendar popup that opens on click, then select-all + type
-        await page.click(sel);
-        await sleep(150);
+        // Use evaluate to focus the element WITHOUT triggering ADF click handlers (which open calendar)
+        await page.evaluate((s) => {
+          const el = document.querySelector(s);
+          if (el) el.focus();
+        }, sel);
+        await sleep(200);
+        // Press Escape just in case calendar opened anyway
         await page.keyboard.press('Escape');
         await sleep(100);
+        // Triple-click select all (works even if Ctrl+A doesn't in some ADF contexts)
         await page.keyboard.down('Control');
         await page.keyboard.press('a');
         await page.keyboard.up('Control');
         await sleep(50);
-        await page.keyboard.type(val, { delay: 25 });
-        await sleep(100);
-        // Tab to next field to commit
+        await page.keyboard.type(val, { delay: 30 });
+        await sleep(150);
+        // Tab to commit — ADF processes the value on Tab/blur
         await page.keyboard.press('Tab');
-        await sleep(400);
+        await sleep(600);
         return true;
       } catch { return false; }
     }
@@ -1987,6 +1992,59 @@ async function handleDebugManageClaims(request, env) {
 
     fillResult.fromFilled = await fillAdfDate(fromSel, fromVal);
     fillResult.toFilled   = await fillAdfDate(toSel, toVal);
+
+    // After keyboard fill, try ADF JavaScript API to set component values directly
+    const adfFillResult = await page.evaluate((fVal, tVal) => {
+      try {
+        // ADF 11g/12c component value API
+        const pg = (typeof AdfPage !== 'undefined') ? AdfPage.PAGE : null;
+        if (!pg) return { tried: false, reason: 'AdfPage not found' };
+        // Find date components by partial ID match
+        const fromId = Object.keys(pg._componentMap || {}).find(k => k.includes('val00'));
+        const toId   = Object.keys(pg._componentMap || {}).find(k => k.includes('val10'));
+        let fromSet = false, toSet = false;
+        if (fromId) { const c = pg.findComponentByAbsoluteId(fromId); if (c && c.setValue) { c.setValue(fVal); fromSet = true; } }
+        if (toId)   { const c = pg.findComponentByAbsoluteId(toId);   if (c && c.setValue) { c.setValue(tVal); toSet   = true; } }
+        return { tried: true, fromId, toId, fromSet, toSet };
+      } catch(e) { return { tried: true, error: e.message }; }
+    }, fromVal, toVal);
+    fillResult.adfFill = adfFillResult;
+
+    // ADF PPR approach: trigger server-side update by simulating the ADF form change event
+    const adfPprResult = await page.evaluate((fVal, tVal) => {
+      try {
+        // Find the input elements for val00 and val10
+        const area = document.getElementById('pt1:contrRg') || document.body;
+        let fromEl = null, toEl = null;
+        for (const el of area.querySelectorAll('input[id*="::content"]')) {
+          if (el.id.includes('val00')) fromEl = el;
+          if (el.id.includes('val10')) toEl   = el;
+        }
+        const results = { fromId: fromEl?.id, toId: toEl?.id };
+        // Simulate proper ADF input events sequence
+        function adfFill(el, val) {
+          if (!el) return false;
+          el.focus();
+          // Set value in multiple ways
+          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          nativeInputValueSetter.call(el, val);
+          // Fire all necessary events for ADF to pick up the change
+          ['focus','click','input','change','blur'].forEach(evtName => {
+            el.dispatchEvent(new Event(evtName, { bubbles: true, cancelable: true }));
+          });
+          // Also try ADF-specific event
+          try {
+            el.dispatchEvent(new Event('valueChange', { bubbles: true }));
+          } catch {}
+          return true;
+        }
+        results.fromFilled = adfFill(fromEl, fVal);
+        results.toFilled   = adfFill(toEl, tVal);
+        return results;
+      } catch(e) { return { error: e.message }; }
+    }, fromVal, toVal);
+    fillResult.adfPpr = adfPprResult;
+    await sleep(500);
 
     // Verify what values actually ended up in the fields
     const actualValues = await page.evaluate(() => {
@@ -2000,20 +2058,278 @@ async function handleDebugManageClaims(request, env) {
     });
     Object.assign(fillResult, actualValues);
 
+    // Check form structure for ADF hidden form submission
+    const formDebug = await page.evaluate(() => {
+      const forms = Array.from(document.querySelectorAll('form'));
+      const area = document.getElementById('pt1:contrRg') || document.body;
+      // Find all clickable elements in the filter area for debugging
+      const clickables = Array.from(area.querySelectorAll('button, input[type="button"], input[type="submit"], a'))
+        .filter(el => el.offsetParent)
+        .slice(0, 20)
+        .map(el => ({
+          tag: el.tagName, id: el.id.slice(-60),
+          text: (el.innerText || el.value || el.title || el.getAttribute('aria-label') || '').trim().slice(0,30),
+          type: el.type, onclick: (el.getAttribute('onclick')||'').slice(0,60)
+        }));
+      return {
+        forms: forms.slice(0, 2).map(f => ({ id: f.id, action: f.action })),
+        clickables
+      };
+    });
+
     await sleep(300);
 
-    // Click View button
+    // Submit search via ADF partial form submit (Trinidad PPR)
+    // Build payload with all required form fields including the date values
+    const pprResult = await page.evaluate(async (fVal, tVal) => {
+      try {
+        const form = document.getElementById('f1');
+        if (!form) return { error: 'form f1 not found' };
+        // Collect all form data
+        const fd = new FormData(form);
+        // Set date field values (component IDs without ::content suffix)
+        const area = document.getElementById('pt1:contrRg') || document.body;
+        let fromCompId = null, toCompId = null, viewBtnId = null;
+        for (const el of area.querySelectorAll('input[id*="::content"]')) {
+          if (el.id.includes('val00')) { fromCompId = el.id.replace('::content',''); }
+          if (el.id.includes('val10')) { toCompId   = el.id.replace('::content',''); }
+        }
+        // Find view/search button
+        for (const el of area.querySelectorAll('button, input[type="button"], a')) {
+          if (!el.offsetParent) continue;
+          const txt = (el.innerText || el.value || el.title || '').trim().toLowerCase();
+          if (txt === 'view' || txt === 'search') { viewBtnId = el.id; break; }
+        }
+        if (!fromCompId || !toCompId) return { error: 'could not find component IDs', fromCompId, toCompId };
+        // Set the date values in FormData
+        fd.set(fromCompId, fVal);
+        fd.set(toCompId, tVal);
+        // ADF partial submit parameters
+        fd.set('javax.faces.partial.ajax', 'true');
+        fd.set('javax.faces.partial.execute', '@all');
+        fd.set('javax.faces.partial.render', '@all');
+        if (viewBtnId) {
+          fd.set('javax.faces.source', viewBtnId);
+          fd.set('javax.faces.partial.event', 'action');
+          fd.set(viewBtnId, viewBtnId);
+        }
+        const resp = await fetch(form.action, {
+          method: 'POST',
+          body: fd,
+          credentials: 'same-origin'
+        });
+        const text = await resp.text();
+        return { ok: resp.ok, status: resp.status, responseLen: text.length, fromCompId, toCompId, viewBtnId,
+                 responseSnippet: text.slice(0, 500) };
+      } catch(e) { return { error: e.message }; }
+    }, fromVal, toVal);
+    fillResult.pprResult = pprResult;
+
+    // Wait for potential PPR re-render
+    if (pprResult?.ok) {
+      try { await page.waitForNetworkIdle({ idleTime: 1000, timeout: 10000 }); } catch { await sleep(4000); }
+    }
+
+    // Try ADF component JavaScript API directly
+    const adfQueryResult = await page.evaluate(async (fVal, tVal) => {
+      try {
+        const pg = (typeof AdfPage !== 'undefined') ? AdfPage.PAGE : null;
+        if (!pg) return { tried: false };
+        // Parse DD-MM-YYYY to JS Date (ADF setValue expects a Date object)
+        function parseDate(ddmmyyyy) {
+          const [d, m, y] = ddmmyyyy.split('-').map(Number);
+          return new Date(y, m - 1, d, 12, 0, 0);
+        }
+        const fromDateObj = parseDate(fVal);
+        const toDateObj   = parseDate(tVal);
+        // Use _clientIdToComponentMap
+        const compMap = pg._clientIdToComponentMap || {};
+        const allClientIds = Object.keys(compMap);
+        const val00Keys = allClientIds.filter(k => k.includes('val00'));
+        const val10Keys = allClientIds.filter(k => k.includes('val10'));
+        let fromSet = false, toSet = false, fromMethods = [], toMethods = [];
+        // Try to setValue on the components with Date objects
+        for (const id of val00Keys) {
+          const c = compMap[id];
+          if (c) {
+            fromMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(c)||{}).slice(0,25);
+            if (typeof c.setValue === 'function') { c.setValue(fromDateObj); fromSet = true; break; }
+            if (typeof c.setProperty === 'function') { c.setProperty('value', fromDateObj); fromSet = true; break; }
+          }
+        }
+        for (const id of val10Keys) {
+          const c = compMap[id];
+          if (c) {
+            toMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(c)||{}).slice(0,25);
+            if (typeof c.setValue === 'function') { c.setValue(toDateObj); toSet = true; break; }
+            if (typeof c.setProperty === 'function') { c.setProperty('value', toDateObj); toSet = true; break; }
+          }
+        }
+        return { tried: true, val00Keys: val00Keys.slice(0,3), val10Keys: val10Keys.slice(0,3), fromSet, toSet, fromMethods, toMethods, totalComps: allClientIds.length };
+      } catch(e) { return { error: e.message }; }
+    }, fromVal, toVal);
+    fillResult.adfQueryResult = adfQueryResult;
+
+    // After setting ADF component values, trigger the query submission
+    // Find af:query's _search command component and call its action
+    await sleep(300);
+    const querySubmitResult = await page.evaluate(() => {
+      try {
+        const pg = AdfPage.PAGE;
+        const compMap = pg._clientIdToComponentMap || {};
+        const allIds = Object.keys(compMap);
+        // Mark date components as changed
+        const fromKeys = allIds.filter(k => k.includes('val00'));
+        const toKeys   = allIds.filter(k => k.includes('val10'));
+        for (const id of [...fromKeys, ...toKeys]) {
+          const c = compMap[id];
+          if (c && typeof c.setChanged === 'function') try { c.setChanged(true); } catch {}
+        }
+        // Find the Search button component (qryId1:_search)
+        const searchBtnKey = allIds.find(k => k.endsWith('qryId1:_search'));
+        const searchComp = searchBtnKey ? compMap[searchBtnKey] : null;
+        // Collect ALL methods from entire prototype chain
+        let allMethods = new Set();
+        let proto = searchComp ? Object.getPrototypeOf(searchComp) : null;
+        while (proto && proto !== Object.prototype) {
+          Object.getOwnPropertyNames(proto).forEach(n => allMethods.add(n));
+          proto = Object.getPrototypeOf(proto);
+        }
+        const allMethodsList = [...allMethods];
+        let calledMethod = null;
+        let callError = null;
+        if (searchComp) {
+          // Try all possible action-trigger methods
+          for (const mname of ['click', 'activate', 'fireAction', 'doAction', 'invokeAction', 'execute', 'submit', 'performAction', 'handleEvent', 'action', 'fire', 'triggerAction', 'processAction', 'doEvent', 'queueAction', 'queueEvent', 'doClick', 'handleClick', 'onClick']) {
+            if (typeof searchComp[mname] === 'function') {
+              try { searchComp[mname](); calledMethod = mname; break; } catch(e) { callError = `${mname}: ${e.message}`; }
+            }
+          }
+          // Also try ADF Action event approach
+          if (!calledMethod) {
+            try {
+              const domEl = document.getElementById(searchBtnKey);
+              if (domEl && window.AdfActionEvent) {
+                const evt = new AdfActionEvent(null, searchComp, null, null);
+                pg.processAction(evt);
+                calledMethod = 'AdfActionEvent+processAction';
+              }
+            } catch(e) { callError = (callError||'') + ' AdfActionEvent: ' + e.message; }
+          }
+          // Also try peer-based action
+          if (!calledMethod) {
+            try {
+              const peer = pg._peersByAbsoluteLocator ? pg._peersByAbsoluteLocator[searchBtnKey] : null;
+              if (!peer) {
+                // Try finding peer by component
+                const domEl = document.getElementById(searchBtnKey);
+                if (domEl && domEl._peer) {
+                  domEl._peer.handleAction && (domEl._peer.handleAction(), calledMethod = 'domEl._peer.handleAction');
+                }
+              }
+            } catch(e) { callError = (callError||'') + ' peer: ' + e.message; }
+          }
+        }
+        // Dispatch ADF-style keyboard event (Enter key) on the search button DOM
+        const domEl = document.getElementById(searchBtnKey);
+        let enterResult = null;
+        if (domEl && !calledMethod) {
+          domEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+          domEl.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+          domEl.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+          enterResult = { fired: true, tag: domEl.tagName };
+        }
+        return { searchBtnKey, allMethods: allMethodsList.slice(0,50), calledMethod, callError, enterResult };
+      } catch(e) { return { error: e.message }; }
+    });
+    fillResult.querySubmitResult = querySubmitResult;
+    await sleep(300);
     const viewClicked = await page.evaluate(() => {
       const area = document.getElementById('pt1:contrRg') || document.body;
+      // ADF Search/View buttons have onclick="this.focus();return false" (does nothing)
+      // Real action: ADF event delegation via mousedown on ancestor container with non-empty id
+      // Strategy: find button, walk up DOM to find first ancestor with real id, fire mousedown+click on it
       for (const el of area.querySelectorAll('button, a, input[type="button"]')) {
         if (!el.offsetParent) continue;
         const txt = (el.innerText || el.value || el.getAttribute('title') || '').trim().toLowerCase();
         if (txt === 'view' || txt === 'search' || txt === 'find') {
-          el.click(); return { text: txt, id: el.id };
+          // Walk up to find ancestor with non-empty id
+          let target = el;
+          let parentIds = [];
+          let cur = el.parentElement;
+          while (cur && cur !== document.body && parentIds.length < 8) {
+            if (cur.id) parentIds.push(cur.id);
+            cur = cur.parentElement;
+          }
+          // Try dispatching mousedown + click on each ancestor with an id (ADF listens to mousedown)
+          for (const pid of parentIds) {
+            const pEl = document.getElementById(pid);
+            if (pEl) {
+              pEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+              pEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+              pEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            }
+          }
+          // Also try direct click
+          el.click();
+          return { text: txt, id: el.id, parentIds, parentCount: parentIds.length };
         }
       }
       return null;
     });
+
+    // Also try: call ADF query component's executeSearch / invokeSearch directly
+    await sleep(300);
+    const adfSearchResult = await page.evaluate(() => {
+      try {
+        const pg = AdfPage.PAGE;
+        const compMap = pg._clientIdToComponentMap || {};
+        const allIds = Object.keys(compMap);
+        // Find the query container component (qryId1 without val suffix)
+        const queryIds = allIds.filter(k => k.endsWith('qryId1'));
+        // Also look for search button components by ID patterns
+        const searchBtnIds = allIds.filter(k => /sb\d|searchBtn|cmdSearch|cmdView|viewBtn/i.test(k));
+        // Enumerate methods of query component
+        let queryMethods = [];
+        let calledMethod = null;
+        let callError = null;
+        if (queryIds[0]) {
+          const qc = compMap[queryIds[0]];
+          const proto = Object.getPrototypeOf(qc) || {};
+          queryMethods = Object.getOwnPropertyNames(proto);
+          // Try known ADF query component search triggers
+          for (const mname of ['executeSearch', 'executeQuery', 'doSearch', 'search', 'performSearch', 'submit', 'invokeSearch', 'doQuery', 'queryActionListener']) {
+            if (typeof qc[mname] === 'function') {
+              try { qc[mname](); calledMethod = mname; break; } catch(e) { callError = e.message; }
+            }
+          }
+        }
+        // Also try: find command component (Search button) via ADF peer and invoke
+        let peerResult = null;
+        try {
+          const AdfCommandButtonPeer = window.AdfRichCommandButton;
+          const domBtn = Array.from(document.querySelectorAll('a, button')).find(el => {
+            const txt = (el.innerText || '').trim().toLowerCase();
+            return (txt === 'view' || txt === 'search') && el.offsetParent;
+          });
+          if (domBtn) {
+            const peerId = domBtn.closest('[id]') ? domBtn.closest('[id]').id : null;
+            if (peerId) {
+              const peer = pg._peersByClientId ? pg._peersByClientId[peerId] : null;
+              if (peer) {
+                const peerMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(peer) || {});
+                peerResult = { peerId, peerMethods: peerMethods.slice(0,20) };
+              } else {
+                peerResult = { peerId, noPeer: true };
+              }
+            }
+          }
+        } catch(e) { peerResult = { error: e.message }; }
+        return { queryIds, searchBtnIds: searchBtnIds.slice(0,5), queryMethods: queryMethods.slice(0,30), calledMethod, callError, peerResult };
+      } catch(e) { return { error: e.message }; }
+    });
+    fillResult.adfSearchResult = adfSearchResult;
+    await sleep(500);
 
     try { await page.waitForNetworkIdle({ idleTime: 1000, timeout: 12000 }); } catch { await sleep(6000); }
 
@@ -2027,7 +2343,7 @@ async function handleDebugManageClaims(request, env) {
           const t = (a.innerText || '').trim().replace(/\s+/g, ' ');
           if (/^Approved/i.test(t)) {
             a.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
-            return { found: true, text: t, id: a.id };
+            return { found: true, text: t, id: a.id, href: a.href, onclick: a.getAttribute('onclick') };
           }
         }
         return { found: false };
@@ -2110,7 +2426,7 @@ async function handleDebugManageClaims(request, env) {
     return json({
       hospital: hospitalId, sessionRestored, fromDate, toDate,
       fillResult, selectors: { fromSel: selectors.fromSel, toSel: selectors.toSel },
-      viewClicked, approvedLink, noData: claimResult.noData, formError: claimResult.formError,
+      viewClicked, approvedLink, formDebug, noData: claimResult.noData, formError: claimResult.formError,
       summary: claimResult.summary,
       claimRows: claimResult.claimRows.slice(0, 20),
       visibleText: claimResult.visibleText.slice(0, 2000),

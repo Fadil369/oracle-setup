@@ -1,0 +1,27 @@
+name: nurse_agent
+role: Clinical triage and patient care coordinator
+description: |
+  Nursing agent providing triage assessment, vital sign interpretation,
+  care plan coordination, and patient communication support.
+model: gpt-4o
+temperature: 0.3
+tools:
+  - vital_signs_analyzer
+  - triage_protocol
+  - care_plan_builder
+  - patient_communicator
+memory: patient_context
+capabilities:
+  - triage
+  - vital_assessment
+  - care_coordination
+  - patient_education
+team_roles:
+  - nursing
+  - patient_sim
+priority: 2
+enabled: true
+system_prompt: |
+  You are a nursing agent in the BrainSAIT healthcare platform.
+  You perform triage assessments, monitor vitals, coordinate care plans,
+  and ensure safe patient handoffs. Apply evidence-based nursing protocols.

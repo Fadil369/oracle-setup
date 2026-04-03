@@ -32,7 +32,7 @@ switch ($Action) {
         Write-Host "=== Tunnel Health via portals API ===" -ForegroundColor Cyan
         try {
             $health = Invoke-RestMethod `
-                -Uri "https://portals.elfadil.com/api/health" `
+                -Uri "https://brainsait.org/api/health" `
                 -Headers @{ Authorization = "Bearer $ApiKey" } `
                 -TimeoutSec 15
             $health.branches | ForEach-Object {
@@ -82,12 +82,12 @@ switch ($Action) {
     "test" {
         Write-Host "=== Live portal health test ===" -ForegroundColor Cyan
         $branches = @(
-            @{ name = "Riyadh";  url = "https://oracle-riyadh.elfadil.com/prod/faces/Login.jsf" },
-            @{ name = "Madinah"; url = "https://oracle-madinah.elfadil.com/Oasis/faces/Login.jsf" },
-            @{ name = "Unaizah"; url = "https://oracle-unaizah.elfadil.com/prod/faces/Login.jsf" },
-            @{ name = "Khamis";  url = "https://oracle-khamis.elfadil.com/prod/faces/Login.jsf" },
-            @{ name = "Jizan";   url = "https://oracle-jizan.elfadil.com/prod/faces/Login.jsf" },
-            @{ name = "Abha";    url = "https://oracle-abha.elfadil.com/Oasis/faces/Home" }
+            @{ name = "Riyadh";  url = "https://oracle-riyadh.brainsait.org/prod/faces/Login.jsf" },
+            @{ name = "Madinah"; url = "https://oracle-madinah.brainsait.org/Oasis/faces/Login.jsf" },
+            @{ name = "Unaizah"; url = "https://oracle-unaizah.brainsait.org/prod/faces/Login.jsf" },
+            @{ name = "Khamis";  url = "https://oracle-khamis.brainsait.org/prod/faces/Login.jsf" },
+            @{ name = "Jizan";   url = "https://oracle-jizan.brainsait.org/prod/faces/Login.jsf" },
+            @{ name = "Abha";    url = "https://oracle-abha.brainsait.org/Oasis/faces/Home" }
         )
         foreach ($b in $branches) {
             try {

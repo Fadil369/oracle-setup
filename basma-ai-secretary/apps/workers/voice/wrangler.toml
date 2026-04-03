@@ -1,0 +1,25 @@
+name = "basma-voice-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "basma_production"
+database_id = "071f4640-3b47-4148-8df0-7d727447d25e"
+
+# R2 Bucket
+[[r2_buckets]]
+binding = "R2_STORAGE"
+bucket_name = "basma-storage"
+
+# Durable Objects
+[[durable_objects]]
+bindings = [{ name = "VOICE_SESSION", class_name = "VoiceSession" }]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["VoiceSession"]
+
+[observability]
+enabled = true

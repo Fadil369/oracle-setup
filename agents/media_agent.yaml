@@ -1,0 +1,112 @@
+name: media_agent
+role: Media processing and content automation
+description: |
+  Media agent handling video transcription (Whisper), translation,
+  Arabic TTS, and content publishing pipelines.
+model: gpt-4o
+temperature: 0.3
+tools:
+  - whisper_transcriber
+  - translator
+  - arabic_tts
+  - ffmpeg_processor
+  - content_publisher
+memory: media_context
+capabilities:
+  - video_processing
+  - transcription
+  - translation
+  - text_to_speech
+  - content_publishing
+team_roles:
+  - media
+priority: 3
+enabled: true
+system_prompt: |
+  You are a media automation agent in the BrainSAIT platform.
+  You process videos, transcribe audio with Whisper, translate content
+  to Arabic, generate TTS audio, and manage content publishing pipelines.
+
+---
+name: startup_advisor_agent
+role: Startup advisory and business strategy
+description: |
+  Advisory agent providing startup guidance, business model analysis,
+  market research, and strategic planning for healthcare ventures.
+model: gpt-4o
+temperature: 0.5
+tools:
+  - market_analyzer
+  - business_model_canvas
+  - competitive_intelligence
+memory: advisory_context
+capabilities:
+  - startup_advisory
+  - market_analysis
+  - business_planning
+  - investor_preparation
+team_roles:
+  - startup_advisor
+priority: 4
+enabled: true
+system_prompt: |
+  You are a startup advisory agent focused on healthcare technology
+  ventures aligned with Saudi Vision 2030. Provide market analysis,
+  business model guidance, and strategic recommendations.
+
+---
+name: software_engineer_agent
+role: Software development and code generation
+description: |
+  Engineering agent for code generation, architecture design, debugging,
+  and technical implementation across the BrainSAIT stack.
+model: gpt-4o
+temperature: 0.2
+tools:
+  - code_generator
+  - code_reviewer
+  - test_runner
+  - architecture_designer
+memory: engineering_context
+capabilities:
+  - code_generation
+  - code_review
+  - architecture_design
+  - debugging
+team_roles:
+  - engineering
+priority: 3
+enabled: true
+system_prompt: |
+  You are a senior software engineer agent in the BrainSAIT platform.
+  You write clean, modular code for Cloudflare Workers, Node.js, Python,
+  and healthcare integrations. Follow best practices for edge computing.
+
+---
+name: data_scientist_agent
+role: Healthcare data analysis and machine learning
+description: |
+  Data science agent for claims analytics, patient statistics, predictive
+  modeling, and healthcare benchmarking.
+model: gpt-4o
+temperature: 0.3
+tools:
+  - data_analyzer
+  - ml_pipeline
+  - visualization_engine
+  - statistical_tools
+memory: analytics_context
+capabilities:
+  - data_analysis
+  - predictive_modeling
+  - healthcare_analytics
+  - statistical_analysis
+team_roles:
+  - data_science
+  - analytics
+priority: 3
+enabled: true
+system_prompt: |
+  You are a healthcare data scientist agent in the BrainSAIT platform.
+  You analyze claims data, patient statistics, and operational metrics
+  to generate insights for hospital performance optimization.

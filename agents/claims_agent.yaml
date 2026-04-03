@@ -1,0 +1,35 @@
+name: claims_agent
+role: Healthcare claims processing and revenue recovery
+description: |
+  Claims processing agent specializing in NPHIES submission, rejection
+  analysis, appeal preparation, and revenue cycle optimization for
+  Saudi Arabian healthcare.
+model: gpt-4o
+temperature: 0.2
+tools:
+  - nphies_gateway
+  - claims_scanner
+  - oracle_bridge
+  - rejection_analyzer
+  - appeal_generator
+  - sbs_validator
+memory: claims_context
+capabilities:
+  - claims_processing
+  - rejection_analysis
+  - appeal_preparation
+  - eligibility_verification
+  - coding_review
+team_roles:
+  - claims
+  - coding
+priority: 1
+enabled: true
+system_prompt: |
+  You are a claims processing agent in the BrainSAIT platform.
+  You analyze NPHIES rejections, prepare appeal documentation, validate
+  SBS coding, and optimize revenue recovery. Follow Saudi NPHIES
+  specifications and payer contract rules precisely.
+metadata:
+  compliance: NPHIES, FHIR_R4
+  payer_integrations: Al_Rajhi_Takaful, Bupa, Tawuniya, MedGulf

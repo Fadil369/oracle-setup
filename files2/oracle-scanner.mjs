@@ -26,7 +26,7 @@
  */
 
 import { chromium }            from "playwright";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve }       from "path";
 import { createHash }          from "crypto";
 
@@ -98,7 +98,7 @@ if (RESUME) {
   // Find latest run dir with a checkpoint
   const artifactsDir = resolve("artifacts/oracle-portal");
   if (existsSync(artifactsDir)) {
-    const runs = readdirSync(artifactsDir)
+    const runs = require("fs").readdirSync(artifactsDir)
       .filter(d => d.startsWith("run-"))
       .sort()
       .reverse();

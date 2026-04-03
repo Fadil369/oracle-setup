@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY maos/ ./maos/
+COPY agents/ ./agents/
+COPY scenarios/ ./scenarios/
+COPY telegram/ ./telegram/
+COPY knowledge/ ./knowledge/
+COPY agent_desktops/ ./agent_desktops/
+
+ENV AGENTS_DIR=agents
+ENV MEMORY_BACKEND=local
+
+EXPOSE 8000
+
+CMD ["uvicorn", "maos.api_gateway:app", "--host", "0.0.0.0", "--port", "8000"]

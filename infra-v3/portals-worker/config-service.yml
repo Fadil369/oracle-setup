@@ -43,17 +43,17 @@ originRequest:
 # no need to repeat them here unless doing managed-config mode.
 #
 # ingress:
-#   - hostname: oracle-riyadh.elfadil.com
+#   - hostname: oracle-riyadh.brainsait.org
 #     service: https://128.1.1.185
 #     originRequest: { noTLSVerify: true, originServerName: "128.1.1.185" }
-#   - hostname: oracle-madinah.elfadil.com
+#   - hostname: oracle-madinah.brainsait.org
 #     service: http://172.25.11.26
-#   - hostname: oracle-unaizah.elfadil.com
+#   - hostname: oracle-unaizah.brainsait.org
 #     service: http://10.0.100.105
-#   - hostname: oracle-khamis.elfadil.com
+#   - hostname: oracle-khamis.brainsait.org
 #     service: http://172.30.0.77
-#   - hostname: oracle-jizan.elfadil.com
+#   - hostname: oracle-jizan.brainsait.org
 #     service: http://172.17.4.84
-#   - hostname: oracle-abha.elfadil.com
+#   - hostname: oracle-abha.brainsait.org
 #     service: http://172.19.1.1
 #   - service: http_status:404

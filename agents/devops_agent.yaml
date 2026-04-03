@@ -1,0 +1,33 @@
+name: devops_agent
+role: Infrastructure management and deployment automation
+description: |
+  DevOps agent managing Cloudflare Workers, Docker containers, Coolify
+  deployments, server monitoring, and infrastructure automation for the
+  BrainSAIT platform.
+model: gpt-4o
+temperature: 0.2
+tools:
+  - docker_manager
+  - coolify_api
+  - cloudflare_api
+  - server_monitor
+  - wrangler_cli
+  - tunnel_manager
+memory: infra_context
+capabilities:
+  - docker_management
+  - kubernetes_operations
+  - coolify_deployments
+  - server_monitoring
+  - cloudflare_management
+  - tunnel_management
+team_roles:
+  - devops
+  - monitoring
+priority: 1
+enabled: true
+system_prompt: |
+  You are a DevOps agent in the BrainSAIT platform.
+  You manage infrastructure including Cloudflare Workers, Docker containers,
+  Coolify deployments, and Cloudflare Tunnels. Monitor server health,
+  deploy services, and ensure high availability across the hospital network.

@@ -18,7 +18,6 @@
 import { chromium }   from "playwright";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, resolve } from "path";
-import { validateBeforeSubmit, validateSBSCodes } from "./fhir-integration/index.mjs";
 
 const argv = process.argv.slice(2);
 const arg  = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i+1] : d; };
@@ -70,7 +69,6 @@ mkdirSync(OUT_DIR, { recursive: true });
 
 const summaryPath = join(OUT_DIR, "summary.json");
 const auditResults = [];
-const fhirAudit = [];
 
 // ─── Success message patterns (NPHIES portal — English + Arabic) ──────────────
 const SUCCESS_PATTERNS = [
@@ -123,64 +121,22 @@ async function run() {
       screenshots: [],
       timestamp:  null,
       error:      null,
-      fhir:       null,
     };
 
     try {
-      // ── FHIR pre-submit checks (advisory) ─────────────────────────────────
-      const mBundle = manifestMap[claim.bundleId];
-      const codes = (claim.rejections || [])
-        .map((r) => r?.code)
-        .filter((c) => typeof c === "string" && c.length > 0);
-
-      const sbsValidation = codes.length
-        ? await validateSBSCodes(codes)
-        : { valid: [], invalid: [], prior_auth_required: [] };
-
-      const fhirPayload = mBundle?.fhirBundle || {
-        resourceType: "Claim",
-        id: claim.bundleId,
-        status: "active",
-        type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/claim-type", code: "professional" }] },
-        use: "claim",
-        patient: { reference: `Patient/${claim.nationalId}` },
-        created: new Date().toISOString(),
-        insurer: { reference: "Organization/PAYER" },
-        provider: { reference: "Organization/PROVIDER" },
-        priority: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/processpriority", code: "normal" }] },
-        insurance: [{ sequence: 1, focal: true, coverage: { reference: "Coverage/1" } }],
-        item: [{ sequence: 1, productOrService: { coding: [] } }],
-      };
-
-      const fhirCheck = await validateBeforeSubmit(fhirPayload);
-      result.fhir = {
-        safe_to_submit: fhirCheck.safe_to_submit,
-        sbs_invalid_codes: sbsValidation.invalid,
-        sbs_prior_auth_required: sbsValidation.prior_auth_required,
-        errors: fhirCheck.errors,
-        warnings: fhirCheck.warnings,
-      };
-      fhirAudit.push({ bundleId: claim.bundleId, ...result.fhir });
-
       // ── Step 1: Prompt human operator ──────────────────────────────────────
       console.log("\n  ⏸  HUMAN ACTION REQUIRED:");
       console.log(`     1. Locate batch ${BATCH_ID} in the NPHIES communication panel`);
       console.log(`     2. Find bundle: ${claim.bundleId}`);
       console.log(`     3. Patient: ${claim.patient} (ID: ${claim.nationalId})`);
       console.log(`     4. Attach the following documents from:`);
+      const mBundle = manifestMap[claim.bundleId];
       if (mBundle?.attachments?.length) {
         mBundle.attachments.forEach(a =>
           console.log(`        - ${a.type}: ${a.path}`)
         );
       } else {
         console.log(`        (refer to appeal letter: ${i+1}_${claim.patient.slice(0,20)}*.txt)`);
-      }
-      if (result.fhir?.errors?.length) {
-        console.log("     FHIR errors detected (advisory):");
-        result.fhir.errors.slice(0, 3).forEach((e) => console.log(`        - ${e}`));
-      }
-      if (result.fhir?.sbs_invalid_codes?.length) {
-        console.log(`     Invalid SBS codes: ${result.fhir.sbs_invalid_codes.join(", ")}`);
       }
       console.log(`     5. Submit the communication / appeal`);
       console.log(`     6. Press ENTER here after submission (or type 'skip' to skip this claim)`);
@@ -233,7 +189,6 @@ async function run() {
       generatedAt: new Date().toISOString(),
       batchId: BATCH_ID,
       runDir:  OUT_DIR,
-      fhirAudit,
       results: auditResults,
     }, null, 2));
   }

@@ -11,22 +11,22 @@
 
 | Subdomain        | Domain      | Type  | URL              | No TLS Verify | HTTP2 |
 |------------------|-------------|-------|------------------|---------------|-------|
-| oracle-riyadh    | elfadil.com | HTTPS | 128.1.1.185      | ✓ ON          | OFF   |
-| oracle-madinah   | elfadil.com | HTTP  | 172.25.11.26     | —             | OFF   |
-| oracle-unaizah   | elfadil.com | HTTP  | 10.0.100.105     | —             | OFF   |
-| oracle-khamis    | elfadil.com | HTTP  | 172.30.0.77      | —             | OFF   |  ← NEW
-| oracle-jizan     | elfadil.com | HTTP  | 172.17.4.84      | —             | OFF   |
-| oracle-abha      | elfadil.com | HTTP  | 172.19.1.1       | —             | OFF   |
-| oracle           | elfadil.com | HTTP  | 172.30.0.77      | —             | OFF   |  ← alias for Khamis
+| oracle-riyadh    | brainsait.org | HTTPS | 128.1.1.185      | ✓ ON          | OFF   |
+| oracle-madinah   | brainsait.org | HTTP  | 172.25.11.26     | —             | OFF   |
+| oracle-unaizah   | brainsait.org | HTTP  | 10.0.100.105     | —             | OFF   |
+| oracle-khamis    | brainsait.org | HTTP  | 172.30.0.77      | —             | OFF   |  ← NEW
+| oracle-jizan     | brainsait.org | HTTP  | 172.17.4.84      | —             | OFF   |
+| oracle-abha      | brainsait.org | HTTP  | 172.19.1.1       | —             | OFF   |
+| oracle           | brainsait.org | HTTP  | 172.30.0.77      | —             | OFF   |  ← alias for Khamis
 
 ### For oracle-riyadh and portals — Additional settings:
 - oracle-riyadh: Origin Server Name = 128.1.1.185  (fixes TLS SNI)
-- portals.elfadil.com: DO NOT add as tunnel rule — it's a Worker
+- brainsait.org: DO NOT add as tunnel rule — it's a Worker
 
 ### Khamis fix:
-  Old: oracle.elfadil.com → 172.30.0.77  (generic name, confusing)
-  New: oracle-khamis.elfadil.com → 172.30.0.77  (named correctly)
-  Keep oracle.elfadil.com as backward-compat alias pointing to same backend.
+  Old: oracle.brainsait.org → 172.30.0.77  (generic name, confusing)
+  New: oracle-khamis.brainsait.org → 172.30.0.77  (named correctly)
+  Keep oracle.brainsait.org as backward-compat alias pointing to same backend.
 
 ---
 
@@ -39,8 +39,8 @@
   npx wrangler deploy
 
   # Test immediately:
-  curl https://portals.elfadil.com/api/health
-  curl https://portals.elfadil.com/api/branches
+  curl https://brainsait.org/api/health
+  curl https://brainsait.org/api/branches
 
 ---
 
@@ -48,12 +48,12 @@
 
   Branch   URL to bookmark / use in scanner
   ──────────────────────────────────────────────────────────────
-  Riyadh   https://oracle-riyadh.elfadil.com/prod/faces/Home
-  Madinah  https://oracle-madinah.elfadil.com/Oasis/faces/Login.jsf   ← /Oasis/
-  Unaizah  https://oracle-unaizah.elfadil.com/prod/faces/Login.jsf
-  Khamis   https://oracle-khamis.elfadil.com/prod/faces/Login.jsf     ← new subdomain
-  Jizan    https://oracle-jizan.elfadil.com/prod/faces/Login.jsf
-  Abha     https://oracle-abha.elfadil.com/Oasis/faces/Home           ← /Oasis/
+  Riyadh   https://oracle-riyadh.brainsait.org/prod/faces/Home
+  Madinah  https://oracle-madinah.brainsait.org/Oasis/faces/Login.jsf   ← /Oasis/
+  Unaizah  https://oracle-unaizah.brainsait.org/prod/faces/Login.jsf
+  Khamis   https://oracle-khamis.brainsait.org/prod/faces/Login.jsf     ← new subdomain
+  Jizan    https://oracle-jizan.brainsait.org/prod/faces/Login.jsf
+  Abha     https://oracle-abha.brainsait.org/Oasis/faces/Home           ← /Oasis/
 
 ---
 
@@ -73,7 +73,7 @@
      No local config changes needed on hospital machines.
 
   3. CLOUDFLARE AS THE ONLY PUBLIC FACE
-     Every URL is *.elfadil.com — Cloudflare proxied.
+     Every URL is *.brainsait.org — Cloudflare proxied.
      Real backend IPs never appear in DNS, HTTP headers, or logs.
      Cloudflare strips all origin headers before returning to client.
 
@@ -86,7 +86,7 @@
 
      Add Access policy for ALL oracle-* subdomains:
      Application name: Oracle Hospital Portals
-     Subdomain: *.elfadil.com
+     Subdomain: *.brainsait.org
      Policy: Allow — Email ends in @brainsait.com OR specific emails
 
   5. TUNNEL CONNECTOR REDUNDANCY
@@ -103,7 +103,7 @@
 
   7. ORACLE-CLAIM-SCANNER INTEGRATION
      oracle-claim-scanner.brainsait.workers.dev uses:
-       GET https://portals.elfadil.com/api/branches
+       GET https://brainsait.org/api/branches
      to discover all branch URLs dynamically.
      No hardcoded URLs in the scanner Worker.
 

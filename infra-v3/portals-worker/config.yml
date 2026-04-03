@@ -8,7 +8,7 @@
 #   Riyadh   → https://128.1.1.185          /prod/faces/Home
 #   Madinah  → http://172.25.11.26          /Oasis/faces/Login.jsf   ← path differs
 #   Unaizah  → http://10.0.100.105          /prod/faces/Login.jsf
-#   Khamis   → http://172.30.0.77           /prod/faces/Login.jsf    ← was oracle.elfadil.com FIXED
+#   Khamis   → http://172.30.0.77           /prod/faces/Login.jsf    ← was oracle.brainsait.org FIXED
 #   Jizan    → http://172.17.4.84           /prod/faces/Login.jsf    ← timeout tuned
 #   Abha     → http://172.19.1.1            /Oasis/faces/Home        ← path differs
 # ============================================================
@@ -31,17 +31,17 @@ originRequest:
 ingress:
 
   # ── BrainSAIT Portal Hub (Worker — no origin needed, CF handles it) ────────
-  # portals.elfadil.com is a Cloudflare Worker, NOT a tunnel route.
+  # brainsait.org is a Cloudflare Worker, NOT a tunnel route.
   # Do NOT add it here — it will override the Worker routing.
 
   # ── MOH external systems ──────────────────────────────────────────────────
-  - hostname: moh-claims.elfadil.com
+  - hostname: moh-claims.brainsait.org
     service: https://e-claims.globemedsaudi.com
     originRequest:
       connectTimeout: 15s
       tcpKeepAlive: 30s
 
-  - hostname: moh-approval.elfadil.com
+  - hostname: moh-approval.brainsait.org
     service: https://purchasingprogramsaudi.com
     originRequest:
       connectTimeout: 15s
@@ -50,7 +50,7 @@ ingress:
   # ── RIYADH — Hayat National Hospital ──────────────────────────────────────
   # HTTPS + self-signed cert → noTLSVerify:true + explicit SNI
   # Login path: /prod/faces/Home
-  - hostname: oracle-riyadh.elfadil.com
+  - hostname: oracle-riyadh.brainsait.org
     service: https://128.1.1.185
     originRequest:
       noTLSVerify: true
@@ -65,7 +65,7 @@ ingress:
   # Login path: /Oasis/faces/Login.jsf  (different context root from others)
   # Status: ONLINE (confirmed via CF Browser Rendering)
   # Dashboard was wrong — was showing "Under Maintenance"
-  - hostname: oracle-madinah.elfadil.com
+  - hostname: oracle-madinah.brainsait.org
     service: http://172.25.11.26
     originRequest:
       connectTimeout: 35s
@@ -77,7 +77,7 @@ ingress:
   # ── UNAIZAH — Unaizah Hospital ────────────────────────────────────────────
   # Login path: /prod/faces/Login.jsf
   # Status: ONLINE (confirmed)
-  - hostname: oracle-unaizah.elfadil.com
+  - hostname: oracle-unaizah.brainsait.org
     service: http://10.0.100.105
     originRequest:
       connectTimeout: 35s
@@ -87,10 +87,10 @@ ingress:
       http2Origin: false
 
   # ── KHAMIS MUSHAIT — Khamis Mushait Hospital ──────────────────────────────
-  # FIX: Was using oracle.elfadil.com (generic) → now has dedicated subdomain
+  # FIX: Was using oracle.brainsait.org (generic) → now has dedicated subdomain
   # Login path: /prod/faces/Login.jsf
-  # Backend: 172.30.0.77 (was incorrectly under oracle.elfadil.com)
-  - hostname: oracle-khamis.elfadil.com
+  # Backend: 172.30.0.77 (was incorrectly under oracle.brainsait.org)
+  - hostname: oracle-khamis.brainsait.org
     service: http://172.30.0.77
     originRequest:
       connectTimeout: 35s
@@ -99,8 +99,8 @@ ingress:
       keepAliveTimeout: 90s
       http2Origin: false
 
-  # Keep oracle.elfadil.com as alias for Khamis (backwards compat)
-  - hostname: oracle.elfadil.com
+  # Keep oracle.brainsait.org as alias for Khamis (backwards compat)
+  - hostname: oracle.brainsait.org
     service: http://172.30.0.77
     originRequest:
       connectTimeout: 35s
@@ -113,7 +113,7 @@ ingress:
   # Login path: /prod/faces/Login.jsf
   # FIX: Increased connectTimeout (was timing out at default 30s)
   # Backend 172.17.4.84 is slower — likely high WAN latency branch
-  - hostname: oracle-jizan.elfadil.com
+  - hostname: oracle-jizan.brainsait.org
     service: http://172.17.4.84
     originRequest:
       connectTimeout: 60s          # Doubled — Jizan LAN is slow
@@ -125,7 +125,7 @@ ingress:
   # ── ABHA — Abha Hospital ──────────────────────────────────────────────────
   # Login path: /Oasis/faces/Home  (different — no Login.jsf, direct to Home)
   # Status: ONLINE (confirmed)
-  - hostname: oracle-abha.elfadil.com
+  - hostname: oracle-abha.brainsait.org
     service: http://172.19.1.1
     originRequest:
       connectTimeout: 35s

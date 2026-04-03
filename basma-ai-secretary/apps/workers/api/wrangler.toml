@@ -1,0 +1,44 @@
+name = "basma-api-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "basma_production"
+database_id = "071f4640-3b47-4148-8df0-7d727447d25e"
+
+# R2 Bucket
+[[r2_buckets]]
+binding = "R2_STORAGE"
+bucket_name = "basma-storage"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CACHE"
+id = "2d062e24d6734c898c69228574751079"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "2d062e24d6734c898c69228574751079"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "2d062e24d6734c898c69228574751079"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "VOICE_SESSION"
+class_name = "VoiceSession"
+script_name = "basma-voice-worker"
+
+[observability]
+enabled = true
+# [vars]
+# JWT_SECRET = "REPLACE_WITH_SECRET"
+# ANTHROPIC_API_KEY = "REPLACE_WITH_SECRET"
+# TWILIO_ACCOUNT_SID = "REPLACE_WITH_SECRET"
+# TWILIO_AUTH_TOKEN = "REPLACE_WITH_SECRET"
+# TWILIO_PHONE_NUMBER = "REPLACE_WITH_SECRET"
+# WHATSAPP_BUSINESS_TOKEN = "REPLACE_WITH_SECRET"
+# ENCRYPTION_KEY = "REPLACE_WITH_SECRET"
