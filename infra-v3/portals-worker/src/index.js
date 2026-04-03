@@ -327,7 +327,7 @@ const EDGE_SERVICE_DIRECTORY = [
   {
     path: "/ai",
     aliases: ["/maos", "/agents"],
-    slug: "ai",
+    slug: "maos",
     tone: "gold",
     shortName: "Agent OS",
     title: "MAOS — Agent Operating System",
@@ -6314,7 +6314,9 @@ function json(data, status = 200, extraOrContext = {}) {
     ? resolveCorsOrigin(extraOrContext.request, extraOrContext.env)
     : "https://portals.brainsait.org";
 
-  const { request: _req, env: _env, ...extraHeaders } = extraOrContext || {};
+  const extraHeaders = hasRequestContext
+    ? {}
+      : (extraOrContext || {});
 
   const headers = {
     "Content-Type": "application/json",
@@ -6328,15 +6330,7 @@ function json(data, status = 200, extraOrContext = {}) {
   if (origin) headers["Access-Control-Allow-Origin"] = origin;
   Object.assign(headers, extraHeaders);
 
-  let body;
-  try {
-    body = JSON.stringify(data, null, 2);
-  } catch (e) {
-    status = 500;
-    body = JSON.stringify({ error: "Serialization failed", details: e.message });
-  }
-
-  return new Response(body, {
+  return new Response(JSON.stringify(data, null, 2), {
     status,
     headers,
   });
