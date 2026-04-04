@@ -57,6 +57,12 @@ function resolveCorsOrigin(request) {
   return ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
 }
 
+/**
+ * Security headers applied to all responses.
+ * NOTE: content-security-policy is NOT included here because it differs
+ * between HTML page responses (PAGE_CSP) and JSON API responses (API_CSP).
+ * Each response handler applies the appropriate CSP separately.
+ */
 const SEC_HEADERS = {
   "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
   "x-content-type-options": "nosniff",
