@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cloudflare-sandbox": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://containers.mcp.cloudflare.com/mcp"],
+      "description": "Cloudflare sandbox-container MCP server. Provides ephemeral Node/Python execution via container_exec, container_file_write, container_file_read, container_initialize, container_ping, container_files_list, container_file_delete. Use for isolated lint/test runs, NPHIES claim analysis, and worker logic validation before deployment."
+    }
+  }
+}

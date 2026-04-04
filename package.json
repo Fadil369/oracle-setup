@@ -22,7 +22,12 @@
     "setup": "node setup.mjs",
     "lint": "eslint . --ext .js,.mjs",
     "test": "node tests/complete-interface-test.mjs",
-    "audit:deps": "npm audit --omit=dev"
+    "audit:deps": "npm audit --omit=dev",
+    "sandbox:quality": "node scripts/sandbox-quality.mjs",
+    "sandbox:lint": "node scripts/sandbox-quality.mjs --check lint",
+    "sandbox:test": "node scripts/sandbox-quality.mjs --check test",
+    "sandbox:audit": "node scripts/sandbox-quality.mjs --check audit",
+    "sandbox:fhir": "node scripts/sandbox-quality.mjs --fhir"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.0.6"
