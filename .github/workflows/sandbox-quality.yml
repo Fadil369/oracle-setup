@@ -53,12 +53,15 @@ jobs:
         run: npm ci
 
       - name: ESLint
+        id: lint
         run: npm run lint
 
       - name: Run tests
+        id: test
         run: npm test
 
       - name: Dependency audit
+        id: audit
         run: npm audit --omit=dev
 
       # Post a summary comment on PRs

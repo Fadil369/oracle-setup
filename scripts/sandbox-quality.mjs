@@ -81,6 +81,7 @@ Examples:
   process.exit(0);
 }
 
+const MAX_OUTPUT_LINES = 40;
 const MCP_URL =
   process.env.MCP_SANDBOX_URL || "https://containers.mcp.cloudflare.com/mcp";
 
@@ -221,9 +222,10 @@ async function main() {
       await client.call("container_file_write", { path: remoteName, content });
 
       console.log("[sandbox] Installing Python dependencies…");
-      await client.call("container_exec", {
-        command: "pip install --quiet fhir.resources pandas 2>&1 | tail -5",
+      const pipResult = await client.call("container_exec", {
+        command: "pip install fhir.resources pandas 2>&1",
       });
+      printResult("pip install", pipResult);
 
       const ext = fhirFile.split(".").pop().toLowerCase();
       let analyzeCmd;
@@ -333,7 +335,7 @@ function printResult(label, result) {
       : JSON.stringify(result, null, 2);
 
   const lines = text.split("\n");
-  const preview = lines.length > 40 ? lines.slice(-40).join("\n") : text;
+  const preview = lines.length > MAX_OUTPUT_LINES ? lines.slice(-MAX_OUTPUT_LINES).join("\n") : text;
   console.log(`\n── ${label} ${"─".repeat(Math.max(0, 60 - label.length))}`);
   console.log(preview || "(no output)");
 }
