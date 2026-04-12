@@ -6,8 +6,8 @@ account_id        = "d7b99530559ab4f2545e9bdc72a7ab9b"
 
 # ── Public route (Cloudflare proxied) ─────────────────────────────────────────
 [[routes]]
-pattern   = "oracle-scanner.elfadil.com/*"
-zone_name = "elfadil.com"
+pattern   = "oracle-scanner.brainsait.org/*"
+zone_name = "brainsait.org"
 
 # ── Browser Rendering (Puppeteer) ─────────────────────────────────────────────
 [browser]
@@ -62,8 +62,8 @@ enabled = true
 # ── Optional env vars ─────────────────────────────────────────────────────────
 [vars]
 DEFAULT_HOSPITAL = "riyadh"
-PORTALS_URL      = "https://portals.elfadil.com"
+PORTALS_URL      = "https://portals.brainsait.org"
 ALLOW_UNAUTHENTICATED = "0"
 REQUIRE_CF_ACCESS = "1"
-CORS_ALLOWED_ORIGINS = "https://portals.elfadil.com"
+CORS_ALLOWED_ORIGINS = "https://portals.brainsait.org"
 CF_ACCESS_TEAM_DOMAIN = ""

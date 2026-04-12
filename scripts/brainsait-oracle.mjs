@@ -99,6 +99,7 @@ Usage:
   brainsait-oracle status [--format json] [--skip-remote]
   brainsait-oracle backup [--output <path>]
   brainsait-oracle migrate --file <sql-file> [--dry-run]
+  brainsait-oracle resubmission-plan --claim-response <file.xlsx> --ministry <file.xlsx> [--output-dir <dir>]
 `);
 }
 
@@ -230,6 +231,10 @@ function migrateCommand(flags) {
   exec("bash", ["-lc", command]);
 }
 
+function resubmissionPlanCommand() {
+  exec("node", ["scripts/build-resubmission-plan.mjs", ...process.argv.slice(3)]);
+}
+
 function main() {
   const { positionals, flags } = parseArgs(process.argv.slice(2));
   const command = positionals[0] || "help";
@@ -249,6 +254,9 @@ function main() {
       break;
     case "migrate":
       migrateCommand(flags);
+      break;
+    case "resubmission-plan":
+      resubmissionPlanCommand();
       break;
     case "help":
     case "--help":

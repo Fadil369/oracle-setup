@@ -3,6 +3,11 @@ main = "src/index.js"
 compatibility_date = "2024-11-01"
 account_id = "d7b99530559ab4f2545e9bdc72a7ab9b"
 
+# Canonical public bridge hostname. Keep this off the tunnel to avoid Worker/tunnel conflicts.
+[[routes]]
+pattern = "oracle-bridge.brainsait.org/*"
+zone_name = "brainsait.org"
+
 [[kv_namespaces]]
 binding = "SESSION_KV"
 id      = "079016c359c348e180724cdd76f29129"
@@ -11,5 +16,4 @@ id      = "079016c359c348e180724cdd76f29129"
 BRIDGE_VERSION = "2.0.0"
 ORACLE_TIMEOUT = "15000"
 
-# Deployed as oracle-bridge.elfadil.com via CF tunnel
-# wrangler deploy → brainsait-fadil.workers.dev, then tunnel routes to oracle-bridge.elfadil.com
+# Deploy as a Worker custom domain, not through the hospital tunnel.

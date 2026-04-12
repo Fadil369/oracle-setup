@@ -14,7 +14,7 @@
  *   Pattern C: j_username              /  j_password                (J2EE form-based)
  */
 
-/** Hospital base URLs via Cloudflare Tunnel */
+/** Hospital base URLs — elfadil.com zone (security_level: essentially_off, no CF bot check) */
 const HOSPITAL_BASES = {
   riyadh:  'https://oracle-riyadh.elfadil.com',
   madinah: 'https://oracle-madinah.elfadil.com',
@@ -22,6 +22,26 @@ const HOSPITAL_BASES = {
   khamis:  'https://oracle-khamis.elfadil.com',
   jizan:   'https://oracle-jizan.elfadil.com',
   abha:    'https://oracle-abha.elfadil.com',
+}
+
+/** brainsait.org portal URLs (security_level: medium — for browser portal config, kept as-is) */
+const HOSPITAL_BRAINSAIT = {
+  riyadh:  'https://oracle-riyadh.brainsait.org',
+  madinah: 'https://oracle-madinah.brainsait.org',
+  unaizah: 'https://oracle-unaizah.brainsait.org',
+  khamis:  'https://oracle-khamis.brainsait.org',
+  jizan:   'https://oracle-jizan.brainsait.org',
+  abha:    'https://oracle-abha.brainsait.org',
+}
+
+/** Tunnel origin IPs (private — accessible only via hayath-mcp CF tunnel e5cb8c86) */
+const HOSPITAL_ORIGINS = {
+  riyadh:  'https://128.1.1.185',
+  madinah: 'http://172.25.11.26',
+  unaizah: 'http://10.0.100.105',
+  khamis:  'http://172.30.0.77',
+  jizan:   'http://172.17.4.84',
+  abha:    'http://172.19.1.1',
 }
 
 /** Context root per hospital */
@@ -420,4 +440,4 @@ export class OracleSession {
   }
 }
 
-export { HOSPITAL_BASES, CTX_ROOTS, LOGIN_PATHS }
+export { HOSPITAL_BASES, HOSPITAL_BRAINSAIT, HOSPITAL_ORIGINS, CTX_ROOTS, LOGIN_PATHS }

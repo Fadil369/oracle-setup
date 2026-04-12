@@ -3,10 +3,10 @@ main = "infra-v3/portals-worker/src/index.js"
 compatibility_date = "2025-01-01"
 account_id = "d7b99530559ab4f2545e9bdc72a7ab9b"
 
-# Serve on portals.elfadil.com
+# Canonical public portal hostname. Do not point this hostname at a tunnel.
 [[routes]]
-pattern = "portals.elfadil.com/*"
-zone_name = "elfadil.com"
+pattern = "portals.brainsait.org/*"
+zone_name = "brainsait.org"
 
 # Health cache KV (optional — cron degrades gracefully if not set)
 # Create:  wrangler kv namespace create "PORTAL_HEALTH"
@@ -27,10 +27,10 @@ enabled = true
 #   wrangler secret put CF_ACCESS_JWT_PUBLIC_KEY
 #   wrangler secret put CF_ACCESS_AUD
 [vars]
-SCANNER_URL = "https://oracle-scanner.elfadil.com"
+SCANNER_URL = "https://oracle-scanner.brainsait.org"
 ALLOW_UNAUTHENTICATED = "0"
 REQUIRE_CF_ACCESS = "0"
-CORS_ALLOWED_ORIGINS = "https://portals.elfadil.com"
+CORS_ALLOWED_ORIGINS = "https://portals.brainsait.org"
 CF_ACCESS_TEAM_DOMAIN = ""
 REPO_URL = "https://github.com/Fadil369/oracle-setup"
 REPO_OWNER = "Fadil369"

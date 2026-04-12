@@ -47,6 +47,39 @@ const ORACLE_PASS   = arg("--pass",       process.env.ORACLE_PASS  || "");
 const TIMEOUT_NAV   = parseInt(arg("--nav-timeout", "60000"),  10);  // per page.goto
 const TIMEOUT_MRN   = parseInt(arg("--mrn-timeout", "120000"), 10);  // per MRN group
 const KEEPALIVE_URL = arg("--keepalive",  ORACLE_URL);
+const BROWSER_PATH  = arg("--browser-path", process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.BROWSER_PATH || "");
+
+function deriveOracleContext(urlText) {
+  const url = new URL(urlText);
+  const [firstSegment] = url.pathname.split("/").filter(Boolean);
+  const ctx = firstSegment ? `/${firstSegment}` : "";
+
+  return {
+    patientSearchUrl: `${url.origin}${ctx}/faces/patient/PatientSearch.jsf`,
+    patientDocumentsUrl: `${url.origin}${ctx}/faces/documents/PatientDocuments.jsf`,
+  };
+}
+
+function parsePatientsFromHTML(html) {
+  const patients = [];
+  const rowRegex = /<tr[^>]*class="[^"]*patient[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+  let match;
+  while ((match = rowRegex.exec(html)) !== null) {
+    const cells = [...match[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((cell) =>
+      cell[1].replace(/<[^>]+>/g, "").trim(),
+    );
+    if (cells.length >= 2) {
+      patients.push({
+        mrn: cells[0] || "",
+        name: cells[1] || "",
+        nationalId: cells[2] || "",
+      });
+    }
+  }
+  return patients;
+}
+
+const ORACLE_CONTEXT = deriveOracleContext(ORACLE_URL);
 
 // ─── Artifacts setup ──────────────────────────────────────────────────────────
 const RUN_TS  = new Date().toISOString().replace(/[:.]/g,"-").slice(0,23);
@@ -134,11 +167,23 @@ if (!PENDING.length) {
 // ─── Browser management ───────────────────────────────────────────────────────
 let browser, context, page;
 
-async function launchBrowser() {
-  browser = await chromium.launch({
+function resolveBrowserLaunchOptions() {
+  const candidates = [
+    BROWSER_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+  ].filter(Boolean);
+  const executablePath = candidates.find((candidate) => existsSync(candidate));
+
+  return {
     headless: HEADLESS,
+    ...(executablePath ? { executablePath } : {}),
     args: ["--ignore-certificate-errors", "--disable-web-security"],
-  });
+  };
+}
+
+async function launchBrowser() {
+  browser = await chromium.launch(resolveBrowserLaunchOptions());
   context = await browser.newContext({
     ignoreHTTPSErrors: true,
     acceptDownloads: true,
@@ -209,11 +254,18 @@ async function resolveMRN(submission) {
   if (mrnCache[nationalId]) return mrnCache[nationalId];
 
   try {
-    // Navigate to patient search
-    await page.goto(`${ORACLE_URL}?action=search`, {
+    await page.goto(`${ORACLE_CONTEXT.patientSearchUrl}?national_id=${encodeURIComponent(nationalId)}`, {
       waitUntil: "domcontentloaded",
       timeout: TIMEOUT_NAV,
     });
+
+    const pagePatients = parsePatientsFromHTML(await page.content());
+    if (pagePatients.length > 0 && pagePatients[0].mrn) {
+      const mrn = pagePatients[0].mrn;
+      mrnCache[nationalId] = mrn;
+      console.log(`    MRN resolved: ${nationalId} → ${mrn}`);
+      return mrn;
+    }
 
     // Try national ID field (varies by Oracle version — try common selectors)
     const searchSelectors = [
@@ -246,6 +298,14 @@ async function resolveMRN(submission) {
       }
     }
 
+    const fallbackPatients = parsePatientsFromHTML(await page.content());
+    if (fallbackPatients.length > 0 && fallbackPatients[0].mrn) {
+      const mrn = fallbackPatients[0].mrn;
+      mrnCache[nationalId] = mrn;
+      console.log(`    MRN resolved: ${nationalId} → ${mrn}`);
+      return mrn;
+    }
+
     // Extract MRN from result table
     const mrnCandidates = await page.locator(
       "td:has-text('MRN'), td[id*='mrn'], td[class*='mrn'], " +
@@ -275,7 +335,7 @@ async function resolveMRN(submission) {
 async function fetchDocumentsForMRN(mrn, invoiceHint, maxDocs) {
   const docs = [];
   try {
-    await page.goto(`${ORACLE_URL}?mrn=${mrn}`, {
+    await page.goto(`${ORACLE_CONTEXT.patientDocumentsUrl}?mrn=${encodeURIComponent(mrn)}`, {
       waitUntil: "domcontentloaded",
       timeout: TIMEOUT_NAV,
     });

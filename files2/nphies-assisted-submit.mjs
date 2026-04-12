@@ -16,7 +16,7 @@
  */
 
 import { chromium }   from "playwright";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 
 const argv = process.argv.slice(2);
@@ -26,6 +26,7 @@ const SELECTION_FILE = arg("--selection", "");
 const SUBMIT_URL     = arg("--submit-url", "");
 const HEADLESS       = arg("--headless", "false") === "true";
 const BATCH_ID       = "BAT-2026-NB-00004295-OT";
+const BROWSER_PATH   = arg("--browser-path", process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.BROWSER_PATH || "");
 
 if (!SELECTION_FILE) {
   console.error("❌  --selection <path> is required");
@@ -85,9 +86,23 @@ function isSuccessMessage(text) {
   return SUCCESS_PATTERNS.some(p => p.test(text));
 }
 
+function resolveBrowserLaunchOptions() {
+  const candidates = [
+    BROWSER_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+  ].filter(Boolean);
+  const executablePath = candidates.find((candidate) => existsSync(candidate));
+
+  return {
+    headless: HEADLESS,
+    ...(executablePath ? { executablePath } : {}),
+  };
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function run() {
-  const browser = await chromium.launch({ headless: HEADLESS });
+  const browser = await chromium.launch(resolveBrowserLaunchOptions());
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const page    = await context.newPage();
 

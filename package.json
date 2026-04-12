@@ -19,13 +19,15 @@
     "oracle:dev": "node scripts/brainsait-oracle.mjs deploy --target local-dev",
     "oracle:status": "node scripts/brainsait-oracle.mjs status",
     "oracle:backup": "node scripts/brainsait-oracle.mjs backup",
+    "resubmission:plan": "node scripts/build-resubmission-plan.mjs",
     "setup": "node setup.mjs",
     "lint": "eslint . --ext .js,.mjs",
     "test": "node tests/complete-interface-test.mjs",
     "audit:deps": "npm audit --omit=dev"
   },
   "dependencies": {
-    "@cloudflare/puppeteer": "^1.0.6"
+    "@cloudflare/puppeteer": "^1.0.6",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "eslint": "^9.39.4",
