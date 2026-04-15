@@ -53,6 +53,20 @@ npm run oracle:status
 npm run build
 ```
 
+## Oracle Portal MCP Starter Pack
+
+This repo now includes a shared Oracle integration contract aligned with open-webui and MOH:
+
+- `config/oracle-portal.env.contract` (canonical variable contract)
+- `.env.oracle-portal.example` (ready-to-copy sample values)
+
+Safety defaults:
+
+- `ORACLE_PORTAL_ALLOWED_BRANCHES=abha,riyadh`
+- `ORACLE_PORTAL_ALLOW_LIVE_SUBMIT=false`
+
+Use `BRANCHES_JSON` to extend branch coverage without code changes.
+
 ### Local developer stack
 
 - `docker/docker-compose.yml` runs an Oracle Free developer database with persisted local storage.
