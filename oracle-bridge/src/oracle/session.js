@@ -331,25 +331,36 @@ export class OracleSession {
    * Returns { reachable, status, loginPageFound, ms }
    */
   async diagnose() {
+    // Direct hostname probe via elfadil.com (CF proxy → tunnel → hospital).
+    // From inside CF Workers this can take 1-30s per hospital due to the proxy hop.
+    // Timeout: 20s. Parallelized in endpoint handler.
     const loginUrl = `${this.base}${this.loginPath}`
     const start = Date.now()
+    const timeoutMs = 20000
     try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
       const resp = await fetch(loginUrl, {
-        headers: { 'User-Agent': 'BrainSAIT-Oracle-Bridge/2.1' },
+        headers: {
+          'User-Agent': 'BrainSAIT-Oracle-Bridge/2.1',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
         redirect: 'follow',
-        signal: AbortSignal.timeout(10000),
-      })
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer))
       const ms = Date.now() - start
-      const text = await resp.text()
+      const text = resp.ok ? await resp.text() : ''
+      const reachable = resp.ok && resp.status !== 502
       return {
         hospital: this.hospital,
         base: this.base,
         loginPath: this.loginPath,
-        reachable: resp.ok,
+        reachable,
         status: resp.status,
-        loginPageFound: /javax\.faces\.ViewState|oracle\.adf|j_username/i.test(text),
+        status_code: resp.status,
+        loginPageFound: reachable && /javax\.faces\.ViewState|oracle\.adf|j_username/i.test(text),
         formId: this._extractFormId(text) || null,
-        viewStatePresent: !!this._extractViewState(text),
+        viewStatePresent: reachable ? !!this._extractViewState(text) : false,
         ms,
       }
     } catch (e) {
@@ -358,11 +369,12 @@ export class OracleSession {
         base: this.base,
         loginPath: this.loginPath,
         reachable: false,
-        error: e.message,
+        error: e.message?.includes('abort') ? 'timeout' : e.message,
         ms: Date.now() - start,
       }
     }
   }
+
 
   // ─────────────────── HTML Parsers ───────────────────
 

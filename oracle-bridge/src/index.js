@@ -200,13 +200,37 @@ async function route(request, url, env) {
   }
 
   // ── Diagnostics ──
-  // GET /diagnose         → probe all hospitals (no auth needed)
-  // GET /diagnose/:id     → probe one hospital
+  // GET /diagnose           → probe all hospitals (slow, probes each through tunnel)
+  // GET /diagnose/status     → fast cached status from KV (no re-probe)
+  // GET /diagnose/:id        → probe one hospital
+  //
+  // Note: /diagnose/status must come BEFORE /diagnose/:id to avoid route conflict
+
+  // Fast cached status — returns immediately from KV without re-probing
+  if (path === '/diagnose/status' && method === 'GET') {
+    const cachedRaw = await env.SESSION_KV.get('diagnose-cache', 'json').catch(() => null)
+    if (cachedRaw && cachedRaw.hospitals) {
+      const hospitals = Object.values(cachedRaw.hospitals)
+      const allOk = hospitals.every(h => h.reachable)
+      return json({ ok: allOk, cached: true, ts: cachedRaw.ts, hospitals }, allOk ? 200 : 207)
+    }
+    // No cache yet — do a full probe
+    const results = await Promise.all(
+      VALID_HOSPITALS.map(h => new OracleSession(env.SESSION_KV, h).diagnose())
+    )
+    const allOk = results.every(r => r.reachable)
+    return json({ ok: allOk, cached: false, hospitals: results, ts: Date.now() }, allOk ? 200 : 207)
+  }
+
   if (path === '/diagnose' && method === 'GET') {
     const results = await Promise.all(
       VALID_HOSPITALS.map(h => new OracleSession(env.SESSION_KV, h).diagnose())
     )
     const allOk = results.every(r => r.reachable)
+    // Cache results in KV for fast /diagnose/status queries
+    const cache = {}
+    for (const r of results) cache[r.hospital] = r
+    await env.SESSION_KV.put('diagnose-cache', JSON.stringify({ ts: Date.now(), hospitals: cache }), { expirationTtl: 300 })
     return json({ ok: allOk, hospitals: results, ts: Date.now() }, allOk ? 200 : 207)
   }
 
@@ -216,6 +240,11 @@ async function route(request, url, env) {
       return json({ error: 'Unknown hospital. Valid: ' + VALID_HOSPITALS.join(', ') }, 400)
     }
     const result = await new OracleSession(env.SESSION_KV, hospital).diagnose()
+    // Cache single result
+    const cachedRaw = await env.SESSION_KV.get('diagnose-cache', 'json').catch(() => null)
+    const cache = (cachedRaw && cachedRaw.hospitals) || {}
+    cache[hospital] = result
+    await env.SESSION_KV.put('diagnose-cache', JSON.stringify({ ts: Date.now(), hospitals: cache }), { expirationTtl: 300 })
     return json(result, result.reachable ? 200 : 502)
   }
 
