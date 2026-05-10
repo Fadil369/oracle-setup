@@ -1,3 +1,10 @@
+import { landingPage } from "./pages/landing.js";
+import { bsmaPage } from "./pages/bsma.js";
+import { givcPage } from "./pages/givc.js";
+import { sbsPage } from "./pages/sbs.js";
+import { govPage } from "./pages/gov.js";
+import { proxyAPI } from "./api/proxy.js";
+
 const DEFAULT_ROUTE_TABLE = {
   "/givc": "https://givc.brainsait.org",
   "/sbs": "https://sbs.brainsait.org",
@@ -15,6 +22,10 @@ const DEFAULT_HEALTH_TARGETS = [
   { id: "oasis", url: "https://oasis.brainsait.org/health" },
   { id: "basma", url: "https://basma.brainsait.org/health" },
   { id: "portal", url: "https://portal.brainsait.org/health" },
+  { id: "bsma-elfadil", url: "https://bsma.elfadil.com/health" },
+  { id: "givc-elfadil", url: "https://givc.elfadil.com/health" },
+  { id: "sbs-elfadil", url: "https://sbs.elfadil.com/health" },
+  { id: "gov-elfadil", url: "https://gov.elfadil.com/health" },
 ];
 
 const ALLOWED_ORIGINS = [
@@ -26,22 +37,59 @@ const ALLOWED_ORIGINS = [
   "https://basma.brainsait.org",
   "https://elfadil.com",
   "https://www.elfadil.com",
+  "https://bsma.elfadil.com",
+  "https://givc.elfadil.com",
+  "https://sbs.elfadil.com",
+  "https://gov.elfadil.com",
 ];
+
+/** Landing pages served for GET requests (exact match). */
+const PAGE_ROUTES = {
+  "/": landingPage,
+  "/bsma": bsmaPage,
+  "/givc": givcPage,
+  "/sbs": sbsPage,
+  "/gov": govPage,
+};
 
 function resolveCorsOrigin(request) {
   const origin = request.headers.get("origin") || "";
   return ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
 }
 
+/**
+ * Security headers applied to all responses.
+ * NOTE: content-security-policy is NOT included here because it differs
+ * between HTML page responses (PAGE_CSP) and JSON API responses (API_CSP).
+ * Each response handler applies the appropriate CSP separately.
+ */
 const SEC_HEADERS = {
   "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
   "referrer-policy": "strict-origin-when-cross-origin",
   "permissions-policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
-  "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
   "cross-origin-opener-policy": "same-origin",
 };
+
+/** CSP for JSON API responses (strict). */
+const API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+
+/** CSP for HTML landing pages (allows inline styles, scripts, and Google Fonts). */
+const PAGE_CSP =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.elfadil.com https://*.brainsait.org; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'";
+
+function htmlResponse(html) {
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=300, s-maxage=600",
+      "content-security-policy": PAGE_CSP,
+      ...SEC_HEADERS,
+    },
+  });
+}
 
 function jsonResponse(payload, status = 200, extraHeaders = {}, request = null) {
   const origin = request ? resolveCorsOrigin(request) : ALLOWED_ORIGINS[0];
@@ -53,6 +101,7 @@ function jsonResponse(payload, status = 200, extraHeaders = {}, request = null) 
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
       "access-control-allow-headers": "content-type,authorization,x-api-key",
+      "content-security-policy": API_CSP,
       ...SEC_HEADERS,
       ...extraHeaders,
     },
@@ -224,6 +273,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // ── CORS preflight ──
     if (request.method === "OPTIONS") {
       const origin = resolveCorsOrigin(request);
       return new Response(null, {
@@ -238,14 +288,33 @@ export default {
       });
     }
 
+    // ── Health endpoint ──
     if (url.pathname === "/health") {
       return handleHealth(env, request);
     }
 
+    // ── Landing pages (exact path match, GET only) ──
+    const pageRenderer = PAGE_ROUTES[url.pathname];
+    if (pageRenderer && request.method === "GET") {
+      return htmlResponse(pageRenderer());
+    }
+
+    // ── API proxy to elfadil.com backends (/api/bsma/*, /api/givc/*, etc.) ──
+    const corsOrigin = resolveCorsOrigin(request);
+    const apiResponse = await proxyAPI(request, url, corsOrigin, { "content-security-policy": API_CSP, ...SEC_HEADERS });
+    if (apiResponse) {
+      return apiResponse;
+    }
+
+    // ── Upstream route-table proxy (existing behavior) ──
     const routeTable = parseRouteTable(env);
     const matchedPrefix = matchPrefix(url.pathname, routeTable);
 
     if (!matchedPrefix) {
+      // For unmatched paths, redirect to landing page
+      if (request.method === "GET") {
+        return Response.redirect(new URL("/", url.origin).toString(), 302);
+      }
       return jsonResponse(
         {
           error: "route_not_found",
